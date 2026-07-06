@@ -15,7 +15,7 @@ let blinkEnabled = true;
 // MOUTH CONFIG
 // =======================
 const MOUTH_CLOSED = 0.2;
-const MOUTH_OPEN = 1.4;
+const MOUTH_OPEN = 1;
 
 // =======================
 // BLINK SYSTEM
