@@ -1,81 +1,120 @@
-const eyes = document.getElementById("eyes");
+// =======================
+// ELEMENTS
+// =======================
+const eyes = document.querySelectorAll(".eye");
 const mouth = document.getElementById("mouth");
+const face = document.querySelector(".face");
 
+// =======================
+// STATE
+// =======================
+let isSpeaking = false;
 let blinkEnabled = true;
-let talking = false;
 
-/* -----------------------
-   EYES SYSTEM
------------------------- */
+// =======================
+// MOUTH CONFIG
+// =======================
+const MOUTH_CLOSED = 0.2;
+const MOUTH_OPEN = 1.4;
 
-function setEyes(state) {
-  eyes.className = "";
-
-  if (state === "open") eyes.classList.add("eyes-open");
-  if (state === "closed") eyes.classList.add("eyes-closed");
-  if (state === "happy") eyes.classList.add("eyes-happy");
-}
-
+// =======================
+// BLINK SYSTEM
+// =======================
 function blink() {
-  if (!blinkEnabled) return;
+  eyes.forEach(eye => {
+    eye.classList.add("blink");
 
-  setEyes("closed");
-
-  setTimeout(() => {
-    setEyes("open");
-  }, 120);
+    setTimeout(() => {
+      eye.classList.remove("blink");
+    }, 150);
+  });
 }
 
-/* random blinking loop */
-setInterval(() => {
-  if (Math.random() < 0.12) blink();
-}, 1800);
+function startBlinkLoop() {
+  setInterval(() => {
+    if (!blinkEnabled) return;
 
-/* -----------------------
-   MOUTH SYSTEM
------------------------- */
-
-function setMouth(v) {
-  const scale = 0.2 + v * 1.2;
-  mouth.style.transform = `translateX(-50%) scaleY(${scale})`;
+    if (!isSpeaking && Math.random() > 0.6) {
+      blink();
+    }
+  }, 2000);
 }
 
-/* fake speech engine */
-function startTalking() {
-  talking = true;
-  blinkEnabled = false;
+// =======================
+// MOUTH SYSTEM
+// =======================
+function setSpeaking(state) {
+  isSpeaking = state;
+
+  if (!state) {
+    // force clean idle state
+    mouth.style.transform =
+      `translateX(-50%) scaleY(${MOUTH_CLOSED})`;
+  }
+}
+
+function setMouthIntensity(level) {
+  // if not speaking, always stay closed
+  if (!isSpeaking) {
+    mouth.style.transform =
+      `translateX(-50%) scaleY(${MOUTH_CLOSED})`;
+    return;
+  }
+
+  // add slight organic variation
+  const jitter = (Math.random() - 0.5) * 0.05;
+
+  const scaleY =
+    MOUTH_CLOSED +
+    level * (MOUTH_OPEN - MOUTH_CLOSED) +
+    jitter;
+
+  mouth.style.transform =
+    `translateX(-50%) scaleY(${scaleY})`;
+}
+
+// =======================
+// EXPRESSIONS (future-ready)
+// =======================
+function setExpression(name) {
+  document.body.dataset.expression = name;
+}
+
+// =======================
+// DEMO SPEECH
+// =======================
+function speakDemo() {
+  setSpeaking(true);
+
+  let i = 0;
 
   const interval = setInterval(() => {
-    if (!talking) {
+    const level = Math.random(); // fake audio energy
+
+    setMouthIntensity(level);
+
+    i++;
+
+    if (i > 25) {
       clearInterval(interval);
-      return;
+      setSpeaking(false);
+
+      // snap back to closed mouth
+      setMouthIntensity(0);
     }
-
-    setMouth(Math.random());
-  }, 70);
+  }, 100);
 }
 
-function stopTalking() {
-  talking = false;
-  blinkEnabled = true;
-  setMouth(0);
+// =======================
+// INIT
+// =======================
+function init() {
+  startBlinkLoop();
+
+  setExpression("neutral");
+
+  // click face to trigger speech test
+  face.addEventListener("click", speakDemo);
 }
 
-/* -----------------------
-   DEMO LOOP
------------------------- */
-
-setInterval(() => {
-  startTalking();
-
-  setTimeout(() => {
-    stopTalking();
-  }, 2500);
-
-}, 5000);
-
-/* click test */
-document.body.addEventListener("click", () => {
-  startTalking();
-  setTimeout(stopTalking, 2000);
-});
+init();
