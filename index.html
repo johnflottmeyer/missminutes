@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Miss Minutes</title>
+
+<style>
+body {
+  margin: 0;
+  background: black;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Character container */
+#character {
+  position: relative;
+  width: 300px;
+  height: 300px;
+  animation: float 3s ease-in-out infinite;
+}
+
+/* FLOAT */
+@keyframes float {
+  0%   { transform: translateY(0px); }
+  50%  { transform: translateY(-10px); }
+  100% { transform: translateY(0px); }
+}
+
+/* EYES */
+#eyes {
+  position: absolute;
+  top: 60px;
+  left: 0;
+  width: 100%;
+  height: 120px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  transition: opacity 0.12s ease;
+}
+
+.eyes-open {
+  background: url("assets/eyes_open.png");
+}
+
+.eyes-closed {
+  background: url("assets/eyes_closed.png");
+}
+
+.eyes-happy {
+  background: url("assets/eyes_happy.png");
+}
+
+/* MOUTH */
+#mouth {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  width: 80px;
+  height: 40px;
+  background: #ffcc00;
+  border-radius: 40px;
+  transform: translateX(-50%) scaleY(0.2);
+  transform-origin: center;
+  transition: transform 0.08s ease;
+}
+</style>
+</head>
+
+<body>
+
+<div id="character">
+  <div id="eyes" class="eyes-open"></div>
+  <div id="mouth"></div>
+</div>
+
+<script>
+const eyes = document.getElementById("eyes");
+const mouth = document.getElementById("mouth");
+
+let blinkEnabled = true;
+let talking = false;
+
+/* ---------- EYES ---------- */
+
+function setEyes(state) {
+  eyes.className = "";
+
+  if (state === "open") eyes.classList.add("eyes-open");
+  if (state === "closed") eyes.classList.add("eyes-closed");
+  if (state === "happy") eyes.classList.add("eyes-happy");
+}
+
+function blink() {
+  if (!blinkEnabled) return;
+
+  setEyes("closed");
+
+  setTimeout(() => {
+    setEyes("open");
+  }, 120);
+}
+
+/* random blinking */
+setInterval(() => {
+  if (Math.random() < 0.12) blink();
+}, 1800);
+
+/* ---------- MOUTH ---------- */
+
+function setMouth(v) {
+  // v: 0 to 1
+  const scale = 0.2 + v * 1.2;
+  mouth.style.transform = `translateX(-50%) scaleY(${scale})`;
+}
+
+/* fake speech animation */
+function startTalking() {
+  talking = true;
+  blinkEnabled = false;
+
+  let i = 0;
+  const interval = setInterval(() => {
+    if (!talking) {
+      clearInterval(interval);
+      return;
+    }
+
+    setMouth(Math.random());
+    i++;
+  }, 70);
+}
+
+function stopTalking() {
+  talking = false;
+  blinkEnabled = true;
+  setMouth(0);
+}
+
+/* ---------- DEMO LOOP ---------- */
+
+/* demo: talk every 5 seconds */
+setInterval(() => {
+  startTalking();
+
+  setTimeout(() => {
+    stopTalking();
+  }, 2500);
+
+}, 5000);
+
+/* click to trigger talk manually */
+document.body.addEventListener("click", () => {
+  startTalking();
+  setTimeout(stopTalking, 2000);
+});
+</script>
+
+</body>
+</html>
