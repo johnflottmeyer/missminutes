@@ -35,19 +35,23 @@ body {
 /* EYES */
 .eyes {
   position: absolute;
-  top: 60px;
+  top: 45px;
   width: 100%;
   display: flex;
   justify-content: space-evenly;
 }
 
 .eye {
-  width: 35px;
-  height: 35px;
+  width: 45px;
+  height: 65px;
   background: white;
-  border-radius: 50% 50% 20% 20%;
+border: 2px solid #000;
+  border-radius: 50% 50% 15% 30%;
   position: relative;
   overflow: hidden;
+}
+.righteye{
+border-radius: 50% 50% 30% 15%;
 }
 
 /* pupil */
@@ -63,17 +67,32 @@ body {
 z-index:80;
 }
 
-.pupil:before {
-content: "";
+#nose {
   width: 12px;
   height: 12px;
-  background: white;
+  background: black;
   border-radius: 50%;
   position: absolute;
-  top: 20%;
-  left: 80%;
+  top: 50%;
+  left: 50%;
   transform: translate(-50%, -50%);
+z-index:80;
+}
+
+.shine {
+  width: 6px;
+  height: 12px;
+  background: white;
+  border-radius: 50% 10% 10% 30%;
+  position: relative;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+
 z-index:100;
+}
+.shine:before{
+
 }
 
 /* BLINK ANIMATION */
@@ -102,13 +121,14 @@ z-index:80;
 
 #mouth {
   position: absolute;
-  bottom: 50px;
+  bottom: 35px;
   left: 50%;
 
   width: 80px;
   height: 40px;
 
-  background: #000c00;
+  background: #FFF;
+border: 4px solid #000;
   border-radius: 20% 20% 40px 40px;
 
   transform: translateX(-50%) scaleY(0.2);
