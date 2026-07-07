@@ -1,138 +1,205 @@
+/* ==========================
+   PAGE
+========================== */
+
 body {
-  margin: 0;
-  background: black;
-  overflow: hidden;
+    margin: 0;
+    background: black;
+    overflow: hidden;
 
-  display: flex;
-  align-items: center;
-  justify-content: center;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+    width: 100vw;
+    height: 100vh;
 }
 
-/* CHARACTER CONTAINER */
+/* ==========================
+   CHARACTER
+========================== */
+
 #character {
-  position: relative;
-  width: 300px;
-  height: 300px;
-	opacity: .8;
-  animation: float 3s ease-in-out infinite;
+    position: relative;
+
+    width: min(85vw, 600px);
+    aspect-ratio: 1;
+
+    animation: float 3s ease-in-out infinite;
 }
 
-/* FLOAT MOTION */
 @keyframes float {
-  0%   { transform: translateY(0px); }
-  50%  { transform: translateY(-10px); }
-  100% { transform: translateY(0px); }
+    0%   { transform: translateY(0); }
+    50%  { transform: translateY(-10px); }
+    100% { transform: translateY(0); }
 }
+
+/* ==========================
+   FACE
+========================== */
 
 .face {
-  width: 200px;
-  height: 200px;
-  background: #ffd34d;
-  border-radius: 50%;
-  position: relative;
+    align-items: center;
+    display:flex;
+
+    position: relative;
+
+    width: 100%;
+    height: 100%;
+ justify-content: center;
+    background: #ffd34d;
+    border-radius: 50%;
 }
 
-/* EYES */
+/* ==========================
+   EYES
+========================== */
+
 .eyes {
-  position: absolute;
-  top: 45px;
-  width: 100%;
-  display: flex;
-  justify-content: space-evenly;
+    align-items: center;
+    display: flex;
+    height: 50%;
+    justify-content: space-between;
+    position: absolute;
+    top: 18%;
+    width: 60%;
 }
 
 .eye {
-  width: 45px;
-  height: 65px;
-  background: white;
-border: 2px solid #000;
-  border-radius: 50% 50% 15% 30%;
-  position: relative;
-  overflow: hidden;
-}
-.righteye{
-border-radius: 50% 50% 30% 15%;
+    position: relative;
+    height: 62%;
+    width: 30%;
+    aspect-ratio: 1 / 1.25;
+
+    background: white;
+    border: 3px solid black;
+
+    border-radius: 50% 50% 15% 15%;
+    overflow: hidden;
 }
 
-/* pupil */
+.righteye {
+    border-radius: 50% 50% `5% 15%;
+}
+.eyelash{
+  bac
+}
+/* ==========================
+   PUPILS
+========================== */
+
 .pupil {
-  width: 25px;
-  height: 25px;
-  background: black;
-  border-radius: 50%;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-z-index:80;
-}
+    position: absolute;
+    height: 56%;
+    width: 46%;
+    aspect-ratio: 1;
 
-#nose {
-  width: 12px;
-  height: 12px;
-  background: black;
-  border-radius: 50%;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-z-index:80;
+    left: 50%;
+    top: 50%;
+
+    transform: translate(-50%, -50%);
+
+    background: black;
+    border-radius: 50%;
+    z-index: 20;
 }
 
 .shine {
-  width: 6px;
-  height: 12px;
-  background: white;
-  border-radius: 50% 10% 10% 30%;
-  position: relative;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+    position: absolute;
 
-z-index:100;
+    width: 18%;
+    aspect-ratio: 1;
+
+    background: white;
+    border-radius: 50%;
+
+    top: 20%;
+    right: 20%;
+
+    z-index: 25;
 }
-.shine:before{
 
+/* ==========================
+   NOSE
+========================== */
+
+#nose {
+    position: absolute;
+
+    width: 8%;
+    aspect-ratio: 1;
+
+    left: 50%;
+    top: 50%;
+
+    transform: translate(-50%, -50%);
+
+    background: black;
+    border-radius: 50%;
+
+    z-index: 30;
 }
 
-/* BLINK ANIMATION */
+/* ==========================
+   MOUTH
+========================== */
+
+#mouth {
+    position: absolute;
+
+    left: 50%;
+    bottom: 16%;
+
+    width: 28%;
+    height: 12%;
+
+    transform: translateX(-50%) scaleY(.2);
+    transform-origin: center;
+
+    background: white;
+    border: 3px solid black;
+
+    border-radius: 20% 20% 50% 50%;
+
+    transition: transform .08s ease;
+}
+
+/* ==========================
+   BLINK
+========================== */
+
 .eye::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  width: 100%;
-  background: #ffd34d;
-  transform: scaleY(0);
-  transform-origin: top;
-z-index:80;
+
+    content: "";
+
+    position: absolute;
+
+    inset: 0;
+
+    background: #ffd34d;
+
+    transform: scaleY(0);
+    transform-origin: top;
+
+    z-index: 40;
 }
 
 .eye.blink::after {
-  animation: blink 0.15s ease-in-out;
+    animation: blink .15s ease-in-out;
 }
 
 @keyframes blink {
-  0%   { transform: scaleY(0); }
-  50%  { transform: scaleY(1); }
-  100% { transform: scaleY(0); }
-}
 
-#mouth {
-  position: absolute;
-  bottom: 35px;
-  left: 50%;
+    0% {
+        transform: scaleY(0);
+    }
 
-  width: 80px;
-  height: 40px;
+    50% {
+        transform: scaleY(1);
+    }
 
-  background: #FFF;
-border: 4px solid #000;
-  border-radius: 20% 20% 40px 40px;
+    100% {
+        transform: scaleY(0);
+    }
 
-  transform: translateX(-50%) scaleY(0.2);
-  transform-origin: center;
-
-  transition: transform 0.08s ease;
 }
