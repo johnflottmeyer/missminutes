@@ -16,6 +16,15 @@
 
     	leftBlink: ["--left-blink", ""],
     	rightBlink: ["--right-blink", ""],
+	leftEyeScaleY: ["--left-eye-scale-y", ""],
+	rightEyeScaleY: ["--right-eye-scale-y", ""],
+
+	leftLidRotate: ["--left-lid-rotate", "deg"],
+	rightLidRotate: ["--right-lid-rotate", "deg"],
+
+	leftLash: ["--left-lash", ""],
+	rightLash: ["--right-lash", ""],
+	lashOpacity: ["--lash-opacity", ""],
 
 
     	leftUpper: ["--left-upper", "deg"],
