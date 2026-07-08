@@ -40,6 +40,7 @@ body {
 --mouth-speech: 0;
     --mouth-width:28%;
     --mouth-y:25%;
+ 
 
 --left-eye-scale-y: 1;
     --right-eye-scale-y: 1;
@@ -55,6 +56,8 @@ body {
 
         --left-blink: 0;
     --right-blink: 0;
+--left-lid-rotate: 0deg;
+    --right-lid-rotate: 0deg;
 
 --left-eye-open: 1;
 --right-eye-open: 1;
@@ -119,7 +122,7 @@ body {
     aspect-ratio: 1 / 1.25;
  transform: scaleY(var(--eye-open));
 
-    background-color: white;
+    
     border: 3px solid black;
 
 
@@ -127,13 +130,28 @@ body {
     overflow: visible;
 	z-index: 15;
 }
-
+.eyeball{
+	background-color: white;
+border-radius: 50%;
+display: block;
+	height: 100%;
+overflow: hidden;
+	position: relative;
+    	width: 100%;
+}
+.left-eye .eyelash,
+.right-eye .eyelash {
+    opacity: var(--lash-opacity);
+    transition:
+        opacity 120ms ease,
+        transform 120ms ease;
+}
 .eyelash{
     border-radius: 50%;
     display:flex;
     justify-content: space-between;
     position:absolute;
-    z-index:110;
+    z-index:120;
     height:100%;
     width:100%;
 
@@ -219,7 +237,7 @@ top:0;
 
     background: black;
     border-radius: 50%;
-    z-index: 20;
+    z-index: 11;
 
     transition: transform 250ms ease;
 }
@@ -292,7 +310,7 @@ top:0;
    BLINK
 ========================== */
 
-.eye::after {
+.eyeball::after {
 
     content: "";
 
@@ -305,8 +323,8 @@ top:0;
     transform: scaleY(0);
     transform-origin: top;
 
-    z-index: 40;
-transition: transform 80ms ease-in-out;
+    z-index: 14;
+	transition: transform 80ms ease-in-out;
 }
 
 .left-eye {
@@ -315,11 +333,15 @@ transition: transform 80ms ease-in-out;
 .right-eye {
     transform: scaleY(var(--right-eye-scale-y));
 }
-.left-eye::after {
-    transform: scaleY(var(--left-blink));
+.left-eye .eyeball::after {
+ 	transform:
+        rotate(var(--left-lid-rotate))
+        scaleY(var(--left-blink));
 }
-.right-eye::after {
-    transform: scaleY(var(--right-blink));
+.right-eye  .eyeball::after {
+ 	transform:
+        rotate(var(--right-lid-rotate))
+        scaleY(var(--right-blink));
 }
 
 .left-eye .topeyelid {
