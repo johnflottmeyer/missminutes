@@ -6,8 +6,11 @@ const POSES = {
         mouthWidth: 28,
         mouthY: 25,
 
-	leftEyeScaleY:1,
-	rightEyeScaleY:1,
+        leftEyeScaleY: 1,
+        rightEyeScaleY: 1,
+
+        leftLidRotate: 0,
+        rightLidRotate: 0,
 
         leftPupilX: 0,
         leftPupilY: 0,
@@ -16,6 +19,10 @@ const POSES = {
 
         leftBlink: 0,
         rightBlink: 0,
+
+        leftLash: 0,
+        rightLash: 0,
+        lashOpacity: 1,
 
         leftUpper: 0,
         leftLower: 0,
@@ -28,8 +35,11 @@ const POSES = {
         mouthWidth: 34,
         mouthY: 24,
 
-	leftEyeScaleY:.88,
-	rightEyeScaleY:.88,
+        leftEyeScaleY: 0.88,
+        rightEyeScaleY: 0.88,
+
+        leftLidRotate: -8,
+        rightLidRotate: 8,
 
         leftPupilX: 0,
         leftPupilY: -2,
@@ -38,6 +48,10 @@ const POSES = {
 
         leftBlink: 0.12,
         rightBlink: 0.12,
+
+        leftLash: 0,
+        rightLash: 0,
+        lashOpacity: 1,
 
         leftUpper: 8,
         leftLower: -8,
@@ -50,8 +64,11 @@ const POSES = {
         mouthWidth: 22,
         mouthY: 27,
 
-	leftEyeScaleY:1.15,
-	rightEyeScaleY:1.15,
+        leftEyeScaleY: 1.15,
+        rightEyeScaleY: 1.15,
+
+        leftLidRotate: -10,
+        rightLidRotate: 10,
 
         leftPupilX: -2,
         leftPupilY: -3,
@@ -60,6 +77,10 @@ const POSES = {
 
         leftBlink: 0.08,
         rightBlink: 0.08,
+
+        leftLash: 0,
+        rightLash: 0,
+        lashOpacity: 1,
 
         leftUpper: -10,
         leftLower: 12,
@@ -72,6 +93,12 @@ const POSES = {
         mouthWidth: 24,
         mouthY: 23,
 
+        leftEyeScaleY: 0.8,
+        rightEyeScaleY: 0.8,
+
+        leftLidRotate: 12,
+        rightLidRotate: -12,
+
         leftPupilX: 0,
         leftPupilY: 2,
         rightPupilX: 0,
@@ -79,6 +106,10 @@ const POSES = {
 
         leftBlink: 0.22,
         rightBlink: 0.22,
+
+        leftLash: 0,
+        rightLash: 0,
+        lashOpacity: 1,
 
         leftUpper: -25,
         leftLower: 15,
@@ -91,8 +122,11 @@ const POSES = {
         mouthWidth: 22,
         mouthY: 28,
 
-	leftEyeScaleY:.82,
-	rightEyeScaleY:.82,
+        leftEyeScaleY: 0.82,
+        rightEyeScaleY: 0.82,
+
+        leftLidRotate: -8,
+        rightLidRotate: 8,
 
         leftPupilX: 0,
         leftPupilY: 4,
@@ -102,6 +136,9 @@ const POSES = {
         leftBlink: 0.15,
         rightBlink: 0.15,
 
+        leftLash: 0,
+        rightLash: 0,
+        lashOpacity: 1,
 
         leftUpper: -6,
         leftLower: 10,
@@ -119,6 +156,12 @@ function setPose(name) {
     characterState.base.mouthWidth = pose.mouthWidth;
     characterState.base.mouthY = pose.mouthY;
 
+    characterState.base.leftEyeScaleY = pose.leftEyeScaleY;
+    characterState.base.rightEyeScaleY = pose.rightEyeScaleY;
+
+    characterState.base.leftLidRotate = pose.leftLidRotate;
+    characterState.base.rightLidRotate = pose.rightLidRotate;
+
     characterState.base.leftPupilX = pose.leftPupilX;
     characterState.base.leftPupilY = pose.leftPupilY;
     characterState.base.rightPupilX = pose.rightPupilX;
@@ -126,11 +169,15 @@ function setPose(name) {
 
     characterState.base.leftBlink = pose.leftBlink;
     characterState.base.rightBlink = pose.rightBlink;
+
     characterState.base.leftLash = pose.leftLash;
     characterState.base.rightLash = pose.rightLash;
+    characterState.base.lashOpacity = pose.lashOpacity;
 
     characterState.base.leftUpper = pose.leftUpper;
     characterState.base.leftLower = pose.leftLower;
     characterState.base.rightUpper = pose.rightUpper;
     characterState.base.rightLower = pose.rightLower;
+
+    renderCharacter();
 }
