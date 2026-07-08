@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <title>Miss Minutes</title>
-<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="css/styles.css" />
 </head>
 
 <body>
@@ -11,7 +11,7 @@
 <div id="character">
 	<div class="clockparts">
 		<div class="one"></div>
-<div class="onehalf"></div>
+		<div class="onehalf"></div>
 		<div class="two"></div>
 		<div class="three"></div>
 		<div class="four"></div>
@@ -27,25 +27,39 @@
 		<div class="eleven"></div>
 		<div class="twelve"></div>
 	</div>
-<div class="arm left-arm">
-    <div class="upper-arm">
-        <div class="lower-arm">
-            <div class="hand">
-    <div class="palm"></div>
-
-    <div class="finger finger1"></div>
-    <div class="finger finger2"></div>
-    <div class="finger finger3"></div>
-    <div class="finger finger4"></div>
-
-    <div class="thumb"></div>
-</div>
-        </div>
-    </div>
-</div>
+	<div class="arm left-arm">
+    		<div class="upper-arm">
+        		<div class="lower-arm">
+            			<div class="hand">
+					<div class="glove"></div>
+    					<div class="palm"></div>
+    					<div class="finger finger1"></div>
+    					<div class="finger finger2"></div>
+    					<div class="finger finger3"></div>
+    					<div class="finger finger4"></div>
+    					<div class="thumb"></div>
+				</div>
+        		</div>
+    		</div>
+	</div>
+	<div class="arm right-arm">
+    		<div class="upper-arm">
+        		<div class="lower-arm">
+            			<div class="hand">
+					<div class="glove"></div>
+    					<div class="palm"></div>
+    					<div class="finger finger1"></div>
+    					<div class="finger finger2"></div>
+    					<div class="finger finger3"></div>
+    					<div class="finger finger4"></div>
+    					<div class="thumb"></div>
+				</div>
+        		</div>
+    		</div>
+	</div>
 	<div class="face">
 		<div class="eyes">
-			<div class="eye">
+			<div class="eye left-eye">
 <div class="topeyelid">
 				<div class="eyelash">
 					<span></span>
@@ -57,7 +71,7 @@
 				<div class="pupil"><div class="shine"></div></div>
 				<div class="eyelid"></div>
 			</div>
-			<div class="eye righteye">
+			<div class="eye right-eye">
 				<div class="topeyelid">
 				<div class="eyelash">
 					<span></span>
@@ -71,17 +85,30 @@
 			</div>
  		 </div>
 		<div id="nose"></div>
-  		<div id="mouth"></div>
+  		<div id="mouth" class="mouth"></div>
 	</div>
 </div>
 <br>
 <div class="controls">
-<button action="">angry</button>
-<button action="">happy</button>
-<button action="">sad</button>
-<button action="">worried</button>
+<button data-expression="neutral">Neutral</button>
+<button data-expression="angry">Angry</button>
+<button data-expression="happy">Happy</button>
+<button data-expression="sad">Sad</button>
+<button data-expression="worried">Worried</button>
+<div class="speech-controls">
+    <input id="speechText" type="text" value="Well hey there, sugar." />
+    <button id="talkTest">Talk Test</button>
 </div>
-<script src="app.js"></script>
+</div>
+
+<script src="js/characterState.js"></script>
+<script src="js/renderCharacter.js"></script>
+<script src="js/poses.js"></script>
+<script src="js/blink.js"></script>
+<script src="js/idle.js"></script>
+<script src="js/eyes.js"></script>
+<script src="js/speech.js"></script>
+<script src="js/app.js"></script>
 
 </body>
 </html>
