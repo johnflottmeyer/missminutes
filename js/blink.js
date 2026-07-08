@@ -7,17 +7,24 @@ let blinkTimer = null;
 
 function blink() {
     if (!window.characterState) return;
+console.log("blink");
 
     characterState.blink.leftBlink = 1;
     characterState.blink.rightBlink = 1;
     characterState.blink.leftLash = 80;
     characterState.blink.rightLash = 80;
+	 characterState.blink.lashOpacity = 0;
+
+//renderCharacter();
 
     setTimeout(function () {
         delete characterState.blink.leftBlink;
 	delete characterState.blink.rightBlink;
-        delete characterState.blink.leftLash;
+	delete characterState.blink.leftLash;
 	delete characterState.blink.rightLash;
+	delete characterState.blink.lashOpacity;
+
+//renderCharacter();
     }, 90);
 }
 function scheduleBlink() {
