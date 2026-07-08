@@ -1,0 +1,642 @@
+/* ==========================
+   PAGE
+========================== */
+
+body {
+    margin: 0;
+    background: black;
+    overflow: hidden;
+
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+
+    width: 100vw;
+    height: 100vh;
+}
+
+/* ==========================
+   CHARACTER
+========================== */
+
+#character{
+
+    position:relative;
+
+    width:min(85vw,600px);
+    aspect-ratio:1;
+
+    animation:float 3s ease-in-out infinite;
+
+    /* ==========================
+       FACE
+    ========================== */
+
+    --head-rotate:0deg;
+
+
+--mouth-base: .20;
+--mouth-speech: 0;
+    --mouth-width:28%;
+    --mouth-y:25%;
+
+--left-eye-scale-y: 1;
+    --right-eye-scale-y: 1;
+
+    --left-lash-rest: 0;
+    --right-lash-rest: 0;
+
+    --left-pupil-x:0%;
+    --left-pupil-y:0%;
+
+    --right-pupil-x:0%;
+    --right-pupil-y:0%;
+
+        --left-blink: 0;
+    --right-blink: 0;
+
+--left-eye-open: 1;
+--right-eye-open: 1;
+
+    /* ==========================
+       LEFT ARM
+    ========================== */
+
+    --left-upper:0deg;
+    --left-lower:0deg;
+
+    /* ==========================
+       RIGHT ARM
+    ========================== */
+
+    --right-upper:0deg;
+    --right-lower:0deg;
+
+}
+
+@keyframes float {
+    0%   { transform: translateY(0); }
+    50%  { transform: translateY(-10px); }
+    100% { transform: translateY(0); }
+}
+
+/* ==========================
+   FACE
+========================== */
+
+.face {
+    align-items: center;
+    display:flex;
+
+    position: relative;
+
+    width: 100%;
+    height: 100%;
+	justify-content: center;
+
+    border-radius: 50%;
+}
+
+/* ==========================
+   EYES
+========================== */
+
+.eyes {
+    align-items: center;
+    display: flex;
+    height: 50%;
+    justify-content: space-between;
+    position: absolute;
+    top: 22%;
+    width: 60%;
+}
+
+.eye {
+    position: relative;
+    height: 65%;
+    width: 30%;
+    aspect-ratio: 1 / 1.25;
+ transform: scaleY(var(--eye-open));
+
+    background-color: white;
+    border: 3px solid black;
+
+
+	border-radius: 50%;
+    overflow: visible;
+	z-index: 15;
+}
+
+.eyelash{
+    border-radius: 50%;
+    display:flex;
+    justify-content: space-between;
+    position:absolute;
+    z-index:110;
+    height:100%;
+    width:100%;
+
+    box-shadow: inset 0px 4px #000, inset 0px 4px 1px 0px #000;
+
+
+    transform: rotateX(0deg);
+	transform: translateY(0%);
+    transition: transform 0.08s ease-in-out;
+}
+.eyelid{
+    border-radius: 50%;
+	border-top: 2px solid #000;
+	bottom: -3%;
+    display:flex;
+    position:absolute;
+
+    z-index:110;
+    height:25%;
+    width:100%;
+
+    background-color: #ffd34d;
+}
+.topeyelid{
+    position:absolute;
+    inset:0;
+    transition:transform 90ms ease;
+}
+
+.eyelash span{
+ 	background-color: #000;
+	border-radius:20%;
+	display: block;
+	width: 70%;
+	height: 5%;
+top:0;
+	z-index:100;
+}
+.eyelash span:first-of-type{
+	rotate: 60deg;
+}
+.eyelash span:nth-of-type(2){
+	top: -8%;
+	position: relative;
+	rotate: 90deg;
+}
+.eyelash span:nth-of-type(3){
+	top: -8%;
+	position: relative;
+	rotate: 90deg;
+}
+.eyelash span:last-of-type{
+	rotate: 120deg;
+}
+/* ==========================
+   PUPILS
+========================== */
+
+.left-eye .pupil {
+    transform:
+        translate(
+            calc(-50% + var(--left-pupil-x, 0%)),
+            calc(-50% + var(--left-pupil-y, 0%))
+        );
+}
+
+.right-eye .pupil {
+    transform:
+        translate(
+            calc(-50% + var(--right-pupil-x, 0%)),
+            calc(-50% + var(--right-pupil-y, 0%))
+        );
+}
+
+.pupil {
+    position: absolute;
+    height: 56%;
+    width: 46%;
+    aspect-ratio: 1;
+
+    left: 50%;
+    top: 50%;
+
+    background: black;
+    border-radius: 50%;
+    z-index: 20;
+
+    transition: transform 250ms ease;
+}
+.shine {
+    position: absolute;
+
+    width: 18%;
+    aspect-ratio: 1;
+
+    background: white;
+    border-radius: 50%;
+
+    top: 20%;
+    right: 20%;
+
+    z-index: 25;
+}
+
+/* ==========================
+   NOSE
+========================== */
+
+#nose {
+    position: absolute;
+
+    width: 8%;
+    aspect-ratio: 1;
+
+    left: 50%;
+    top: 50%;
+
+    transform: translate(-50%, -50%);
+
+    background: black;
+    border-radius: 50%;
+
+    z-index: 30;
+}
+
+/* ==========================
+   MOUTH
+========================== */
+
+#mouth {
+    position: absolute;
+
+    left: 50%;
+    bottom: var(--mouth-y);
+
+    width: var(--mouth-width);
+    height: 12%;
+
+    transform:
+        translateX(-50%)
+        scaleY(calc(var(--mouth-base) + var(--mouth-speech)));
+
+    transform-origin: center top;
+
+    transition:
+        transform 80ms ease,
+        width 250ms ease,
+        bottom 250ms ease;
+
+    background: white;
+    border: 3px solid black;
+    border-radius: 20% 20% 50% 50%;
+    z-index: 15;
+}
+/* ==========================
+   BLINK
+========================== */
+
+.eye::after {
+
+    content: "";
+
+    position: absolute;
+
+    inset: 0;
+
+    background: #ffd34d;
+
+    transform: scaleY(0);
+    transform-origin: top;
+
+    z-index: 40;
+transition: transform 80ms ease-in-out;
+}
+
+.left-eye {
+    transform: scaleY(var(--left-eye-scale-y));
+}
+.right-eye {
+    transform: scaleY(var(--right-eye-scale-y));
+}
+.left-eye::after {
+    transform: scaleY(var(--left-blink));
+}
+.right-eye::after {
+    transform: scaleY(var(--right-blink));
+}
+
+.left-eye .topeyelid {
+    transform: translateY(calc((var(--left-lash-rest) + var(--left-lash)) * 1%));
+}
+
+.right-eye .topeyelid {
+    transform: translateY(calc((var(--right-lash-rest) + var(--right-lash)) * 1%));
+}
+/*@keyframes blink {
+
+    0% {
+        transform: scaleY(0);
+    }
+
+    50% {
+        transform: scaleY(1);
+    }
+
+    100% {
+        transform: scaleY(0);
+    }
+
+}*/
+/*********************************
+Clock Parts
+**********************************/
+.clockparts{
+	background-color: #ffd34d;
+	border-radius: 50%;
+	
+	display: block;
+	position: absolute;
+	width: 100%;
+	height: 100%;
+	border: 2px solid #FFF;
+	z-index:10;
+box-shadow: 0 0 20px #ffd34d, 0 0 30px #ffd34d, 0 0 40px #ffd34d, 0 0 50px #ffd34d;
+}
+.clockparts div{
+	background-color:#000;
+	border-radius: 5%;
+	display: block;
+	position: absolute; 
+}
+.twelve{
+	width: 3%;
+	height: 15%;	
+	top: 1%;
+	left: 50%;
+	transform: translateX(-50%);
+}
+.three{
+	width: 3%;
+	height: 15%;	
+	top: 40%;
+	right: 1%;
+	rotate: 90deg;
+	transform: translateY(50%);
+}
+.six{
+	width: 3%;
+	height: 15%;	
+	bottom: 1%;
+	left: 50%;
+	transform: translateX(-50%);
+}
+.nine{
+	width: 3%;
+	height: 15%;	
+	top: 40%;
+	left: 1%;
+	rotate: 90deg;
+	transform: translateY(-50%);
+}
+.one{
+	width: 2%;
+	height: 10%;
+	right: 33%;
+	rotate: 30deg;
+	top: 8%;
+}
+.onehalf{
+	width: 2%;
+	height: 10%;
+	right: 21%;
+	rotate: 45deg;
+	top: 16%;
+}
+.two{
+	width: 2%;
+	height: 10%;
+	right: 12%;
+	rotate: 60deg;
+	top: 28%;
+}
+.four{
+	width: 2%;
+	height: 10%;
+	right: 11%;
+	rotate: 115deg;
+	top: 58%;
+}
+.fourhalf{
+	width: 2%;
+	height: 10%;
+	right: 19%;
+	rotate: 128deg;
+	top: 72%;
+}
+.five{
+	width: 2%;
+	height: 10%;
+	right: 32%;
+	rotate: 150deg;
+	top: 83%;
+}
+.seven{
+	width: 2%;
+	height: 10%;
+	left: 33%;
+	rotate: -30deg;
+	top: 8%;
+}
+.sevenhalf{
+	width: 2%;
+	height: 10%;
+	left: 21%;
+	rotate: -45deg;
+	top: 16%;
+}
+.eight{
+	width: 2%;
+	height: 10%;
+	left: 12%;
+	rotate: -60deg;
+	top: 28%;
+}
+.ten{
+	width: 2%;
+	height: 10%;
+	left: 11%;
+	rotate: -115deg;
+	top: 58%;
+}
+.tenhalf{
+	width: 2%;
+	height: 10%;
+	left: 19%;
+	rotate: -128deg;
+	top: 72%;
+}
+.eleven{
+	width: 2%;
+	height: 10%;
+	left: 32%;
+	rotate: -150deg;
+	top: 83%;
+}
+.arm{
+    position:absolute;
+    width:30%;
+    height:30%;
+    pointer-events:none;
+}
+
+.left-arm{
+    left:0%;
+    top:55%;
+}
+.right-arm{
+    left:96%;
+    top:55%;
+}
+
+.upper-arm{
+	background-color: #ffd34d;
+    position:absolute;
+
+    width:14%;
+    height:70%;
+
+
+    border-radius:999px;
+
+    transform-origin:top center;
+}
+
+.lower-arm{
+    background-color: #ffd34d;
+    position:absolute;
+    width:100%;
+    height:70%;
+    border-radius:999px;
+    top:90%;
+    transform-origin:top center;
+}
+.hand{
+    position:absolute;
+    bottom: -50%;
+	display: block;
+    left:-75%;
+    width:250%;
+    height:80%;
+}
+
+/* Palm */
+.glove{
+border-radius:30%;
+border-bottom:1px solid #000;
+top:-10%;
+left:10%;
+width: 80%;
+height:20%;
+background-color: #FFF;
+position:absolute;
+z-index:10;
+}
+.palm{
+    width:100%;
+    height:100%;
+    background:#fff;
+    border-radius:50%;
+    position: absolute;
+    left:0%;
+border-top-left-radius: 30% 75%;
+  border-top-right-radius: 30% 75%;
+  border-bottom-right-radius: 50% 30%;
+  border-bottom-left-radius: 50% 30%;
+z-index:1;
+}
+
+/* Base finger style */
+.finger{
+    position:absolute;
+    width:20%;
+    height:70%;
+    background:#fff;
+    border-radius:30%;
+}
+
+/* Individual fingers */
+.finger1{
+    left:0;
+    bottom:-20%;
+}
+
+.left-arm .finger2{
+    left:25%;
+    bottom:-35%;
+}
+
+.left-arm .finger3{
+    left:55%;
+    bottom:-40%;
+}
+.right-arm .finger2{
+    left:55%;
+    bottom:-35%;
+}
+
+.right-arm .finger3{
+    left:25%;
+    bottom:-40%;
+}
+
+
+.finger4{
+    left:80%;
+    bottom:-20%;
+}
+
+/* Thumb */
+.left-arm .thumb{
+    position:absolute;
+    width:100%;
+    height:25%;
+    background:#FFF;
+    border-radius:30%;
+    right:-40%;
+	rotate: 50deg;
+    top:20%;
+}
+.right-arm .thumb{
+    position:absolute;
+    width:100%;
+    height:25%;
+    background:#FFF;
+    border-radius:30%;
+    left:-40%;
+	rotate: -50deg;
+    top:20%;
+}
+.left-arm .upper-arm{
+
+    transform:
+        rotate(var(--left-upper));
+
+}
+
+.left-arm .lower-arm{
+
+    transform:
+        rotate(var(--left-lower));
+
+}
+
+.right-arm .upper-arm{
+
+    transform:
+        rotate(var(--right-upper));
+
+}
+
+.right-arm .lower-arm{
+
+    transform:
+        rotate(var(--right-lower));
+
+}
