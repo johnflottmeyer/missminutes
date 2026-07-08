@@ -8,7 +8,7 @@ body {
     overflow: hidden;
 
     display: flex;
-flex-direction: column;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
 
@@ -47,7 +47,7 @@ flex-direction: column;
 
     width: 100%;
     height: 100%;
-	 justify-content: center;
+	justify-content: center;
 
     border-radius: 50%;
 }
@@ -428,45 +428,40 @@ Clock Parts
 }
 
 .lower-arm{
-background-color: #ffd34d;
+    background-color: #ffd34d;
     position:absolute;
-
     width:100%;
     height:70%;
-
-
     border-radius:999px;
-
     top:90%;
-
     transform-origin:top center;
 }
 .hand{
-    position:relative;
-left:-15px;
-    width:70px;
-    height:70px;
+    position:absolute;
+    bottom: 0;
+    left:-14%;
+    width:14%;
+    height:70%;
 }
 
 /* Palm */
 .palm{
-    position:absolute;
-    width:40px;
-    height:40px;
-    background:#f7e8b8;
+    width:40%;
+    height:40%;
+    background:#fff;
     border-radius:50%;
-    left:15px;
-    bottom:20px;
+    position: relative;
+    left:-15%;
 }
 
 /* Base finger style */
-.finger{
+/*.finger{
     position:absolute;
     width:18px;
     height:18px;
     background:#f7e8b8;
     border-radius:50%;
-}
+}*/
 
 /* Individual fingers */
 .finger1{
@@ -490,7 +485,7 @@ left:-15px;
 }
 
 /* Thumb */
-.thumb{
+/*.thumb{
     position:absolute;
     width:20px;
     height:20px;
@@ -498,4 +493,4 @@ left:-15px;
     border-radius:50%;
     left:0;
     top:36px;
-}
+}*/
