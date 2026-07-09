@@ -18,32 +18,59 @@ function stopIdle() {
 
 }
 
+function headLeft() {
+    setHeadTurn(-0.45);
+console.log("turnleft");
+}
+
+function headCenter() {
+    setHeadTurn(0);
+console.log("turncenter");
+}
+
+function headRight() {
+    setHeadTurn(0.45);
+console.log("turnright");
+}
+
 function doIdle() {
 
     if (!idleEnabled) return;
 
     const r = Math.random();
 
-    if (r < .20) {
+    if (r < .15) {
 
         lookLeft();
+        headLeft();
 
-    } else if (r < .40) {
+    } else if (r < .30) {
 
         lookRight();
+        headRight();
 
-    } else if (r < .55) {
+    } else if (r < .45) {
 
         lookUp();
+        headCenter();
 
-    } else if (r < .70) {
+    } else if (r < .60) {
 
         lookDown();
+        headCenter();
+
+    } else if (r < .80) {
+
+        lookCenter();
+        headCenter();
 
     } else {
 
-        lookCenter();
-
+        // Eyes stay centered but the head slowly glances
+        if (Math.random() < .5)
+            headLeft();
+        else
+            headRight();
     }
 
 }
