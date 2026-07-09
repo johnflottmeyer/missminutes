@@ -17,6 +17,9 @@ function startSpeech() {
 
     isSpeaking = true;
 
+    headCenter();
+    lookCenter();
+
     speechTimer = setInterval(function () {
         const shapes = [0.05, 0.15, 0.35, 0.55, 0.25];
         const open = shapes[Math.floor(Math.random() * shapes.length)];
