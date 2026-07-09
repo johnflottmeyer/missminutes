@@ -37,3 +37,12 @@ function startRenderLoop() {
 
     animate();
 }
+const button = document.getElementById("standbyButton");
+button.addEventListener("click", function () {
+
+    toggleStandby();
+
+    button.textContent =
+        isStandby() ? "Wake Up" : "Standby";
+
+});
