@@ -2,9 +2,10 @@
 
 const POSES = {
     neutral: {
-        mouth: 0.2,
-        mouthWidth: 28,
-        mouthY: 25,
+         mouth: 0.2,
+         mouthWidth: 28,
+         mouthY: 25,
+         mouthShape: "smile",
 
         leftEyeScaleY: 1,
         rightEyeScaleY: 1,
@@ -34,6 +35,7 @@ const POSES = {
         mouth: 0.45,
         mouthWidth: 34,
         mouthY: 24,
+        mouthShape: "smile",
 
         leftEyeScaleY: 0.88,
         rightEyeScaleY: 0.88,
@@ -60,9 +62,10 @@ const POSES = {
     },
 
     worried: {
-        mouth: 0.15,
-        mouthWidth: 22,
-        mouthY: 27,
+        mouth: 0.55,
+        mouthWidth: 18,
+        mouthY: 26,
+        mouthShape: "frown",
 
         leftEyeScaleY: 1.15,
         rightEyeScaleY: 1.15,
@@ -89,9 +92,10 @@ const POSES = {
     },
 
     angry: {
-        mouth: 0.25,
-        mouthWidth: 24,
-        mouthY: 23,
+         mouth: 0.12,
+         mouthWidth: 24,
+         mouthY: 28,
+         mouthShape: "frown",
 
         leftEyeScaleY: 0.8,
         rightEyeScaleY: 0.8,
@@ -111,19 +115,20 @@ const POSES = {
         rightLash: 0,
         lashOpacity: 1,
 
-        leftUpper: -25,
-        leftLower: 15,
-        rightUpper: 25,
-        rightLower: -15
+        leftUpper: 25,
+        leftLower: -85,
+        rightUpper: -25,
+        rightLower: 85,
     },
 
     sad: {
-        mouth: 0.12,
-        mouthWidth: 22,
-        mouthY: 28,
+        mouth: 0.35,
+        mouthWidth: 18,
+        mouthY: 26,
+        mouthShape: "frown",
 
-        leftEyeScaleY: 0.82,
-        rightEyeScaleY: 0.82,
+        leftEyeScaleY: 0.7,
+        rightEyeScaleY: 0.7,
 
         leftLidRotate: -8,
         rightLidRotate: 8,
@@ -144,6 +149,36 @@ const POSES = {
         leftLower: 10,
         rightUpper: 6,
         rightLower: -10
+    },
+
+suprised: {
+        mouth: 0.55,
+        mouthWidth: 18,
+        mouthY: 26,
+        mouthShape: "o",
+
+        leftEyeScaleY: 1.15,
+        rightEyeScaleY: 1.15,
+
+        leftLidRotate: 0,
+        rightLidRotate: 0,
+
+        leftPupilX: 0,
+        leftPupilY: 4,
+        rightPupilX: 0,
+        rightPupilY: 4,
+
+        leftBlink: 0,
+        rightBlink: 0,
+
+        leftLash: 0,
+        rightLash: 0,
+        lashOpacity: 1,
+
+        leftUpper: -6,
+        leftLower: 10,
+        rightUpper: 6,
+        rightLower: -10
     }
 };
 
@@ -155,6 +190,7 @@ function setPose(name) {
     characterState.base.mouth = pose.mouth;
     characterState.base.mouthWidth = pose.mouthWidth;
     characterState.base.mouthY = pose.mouthY;
+    characterState.base.mouthShape = pose.mouthShape;
 
     characterState.base.leftEyeScaleY = pose.leftEyeScaleY;
     characterState.base.rightEyeScaleY = pose.rightEyeScaleY;
