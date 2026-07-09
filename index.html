@@ -7,26 +7,11 @@
 </head>
 
 <body>
-
+<div class="controls top-controls">
+    <button id="standbyButton">Standby</button>
+</div>
 <div id="character">
-	<div class="clockparts">
-		<div class="one"></div>
-		<div class="onehalf"></div>
-		<div class="two"></div>
-		<div class="three"></div>
-		<div class="four"></div>
-		<div class="fourhalf"></div>
-		<div class="five"></div>
-		<div class="six"></div>
-		<div class="seven"></div>
-		<div class="sevenhalf"></div>
-		<div class="eight"></div>
-		<div class="nine"></div>
-		<div class="ten"></div>
-		<div class="tenhalf"></div>
-		<div class="eleven"></div>
-		<div class="twelve"></div>
-	</div>
+<div class="character-screen">
 	<div class="arm left-arm">
     		<div class="upper-arm">
         		<div class="lower-arm">
@@ -57,6 +42,7 @@
         		</div>
     		</div>
 	</div>
+	<div class="face-depth"></div>
 	<div class="face">
 		<div class="eyes">
 			<div class="eye left-eye">
@@ -90,28 +76,55 @@
  		 </div>
 		<div id="nose"></div>
   		<div id="mouth" class="mouth"></div>
+		<!--<div class="scanlines"></div>-->
+		<div class="clockparts">
+			<div class="one"></div>
+			<div class="onehalf"></div>
+			<div class="two"></div>
+			<div class="three"></div>
+			<div class="four"></div>
+			<div class="fourhalf"></div>
+			<div class="five"></div>
+			<div class="six"></div>
+			<div class="seven"></div>
+			<div class="sevenhalf"></div>
+			<div class="eight"></div>
+			<div class="nine"></div>
+			<div class="ten"></div>
+			<div class="tenhalf"></div>
+			<div class="eleven"></div>
+			<div class="twelve"></div>
+		</div>
+		
 	</div>
+</div>
 </div>
 <br>
 <div class="controls">
-<button data-expression="neutral">Neutral</button>
-<button data-expression="angry">Angry</button>
-<button data-expression="happy">Happy</button>
-<button data-expression="sad">Sad</button>
-<button data-expression="worried">Worried</button>
+	<button data-expression="neutral">Neutral</button>
+	<button data-expression="angry">Angry</button>
+	<button data-expression="happy">Happy</button>
+	<button data-expression="sad">Sad</button>
+	<button data-expression="worried">Worried</button>
+	<button data-expression="suprised">Suprised</button>
 <div class="speech-controls">
     <input id="speechText" type="text" value="Well hey there, sugar." />
     <button id="talkTest">Talk Test</button>
 </div>
 </div>
 
+
+
+
 <script src="js/characterState.js"></script>
 <script src="js/renderCharacter.js"></script>
 <script src="js/poses.js"></script>
 <script src="js/blink.js"></script>
+<script src="js/headturn.js"></script>
 <script src="js/idle.js"></script>
 <script src="js/eyes.js"></script>
 <script src="js/speech.js"></script>
+<script src="js/standby.js"></script>
 <script src="js/app.js"></script>
 
 </body>
