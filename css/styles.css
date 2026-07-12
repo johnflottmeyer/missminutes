@@ -106,6 +106,7 @@ body {
     position: relative;
     width: 70%;
     height: 70%;
+margin-bottom: 60px;
     opacity:.85;
     transform-origin: center center;
 }
@@ -865,9 +866,7 @@ z-index:1;
 
 .controls{
     position:relative;
-    bottom:20px;
-    left:50%;
-    transform:translateX(-50%);
+    bottom:0px;
 
     display:flex;
     flex-wrap:wrap;
@@ -1027,8 +1026,9 @@ border:1px solid #FFF;
 
 }
 .shoe{
+margin-bottom:20px;
     position:absolute;
-    bottom: -80%;
+    bottom: -100%;
     display: block;
     left:-70%;
     width:250%;
