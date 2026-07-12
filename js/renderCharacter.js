@@ -7,6 +7,7 @@
     const cssMap = {
         mouth: ["--mouth-base", ""],
         mouthWidth: ["--mouth-width", "%"],
+	mouthSpeech: ["--mouth-speech", ""],
         mouthY: ["--mouth-y", "%"],
 
         leftPupilX: ["--left-pupil-x", "%"],
