@@ -343,13 +343,17 @@ top:0;
 .shine {
     position: absolute;
 
-    width: 18%;
+    /*width: 18%;*/
     aspect-ratio: 1;
 
-    background: white;
-    border-radius: 50%;
 
-    top: 20%;
+    /*border-radius: 50%;*/
+width: 0; height: 0;
+  border-style: solid;
+border-width: 0px 4px 20px 0px;
+border-color: transparent transparent #FFF transparent;
+  transform: rotate(217deg);
+    top: 0%;
     right: 20%;
 
     z-index: 25;
