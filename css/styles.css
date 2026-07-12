@@ -341,20 +341,21 @@ top:0;
     transition: transform 250ms ease;
 }
 .shine {
-    position: absolute;
 
-    /*width: 18%;*/
-    aspect-ratio: 1;
+    position:absolute;
+
+    width:60%;
+    aspect-ratio:2.8;
+
+    background:#fff;
+
+    clip-path:polygon(0 0,100% 50%,0 100%);
+
+    transform:rotate(120deg);
 
 
-    /*border-radius: 50%;*/
-width: 0; height: 0;
-  border-style: solid;
-border-width: 0px 4px 20px 0px;
-border-color: transparent transparent #FFF transparent;
-  transform: rotate(217deg);
-    top: 0%;
-    right: 20%;
+    top:18%;
+    right:-5%;
 
     z-index: 25;
 }
