@@ -1,9 +1,23 @@
 import os
 import json
+import time
 import fcntl
+import logging
+import threading
 
 from mcp.server import MCPServer
 from starlette.responses import JSONResponse
+
+
+# ==========================
+# LOGGING
+# ==========================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+logger = logging.getLogger("miss_minutes")
 
 
 # ==========================
@@ -26,15 +40,32 @@ SPEECH_QUEUE_FILE = os.path.join(
     "speech_queue.txt"
 )
 
+# Rotate the queue file if it grows past this size (bytes).
+# Protects against unbounded growth if the consumer falls behind
+# or stops draining the file.
+SPEECH_QUEUE_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+
 
 # ==========================
 # LATEST TEXT STATE
 # ==========================
+# Protected by _state_lock. Two fields must always be updated
+# together so a concurrent reader (the /latest-text route) never
+# sees a new "text" paired with an old "id" or vice versa.
+
+_state_lock = threading.Lock()
 
 latest_text = {
     "id": 0,
-    "text": ""
+    "text": "",
+    "updated_at": None
 }
+
+# Track the last N responses (not just the last one) so exact-duplicate
+# suppression only blocks true back-to-back repeats, not "said this
+# a few turns ago."
+_recent_texts = []
+_RECENT_TEXTS_MAX = 3
 
 
 # ==========================
@@ -47,12 +78,78 @@ def ping() -> str:
     Test the connection to the Miss Minutes Raspberry Pi.
     """
 
-    print(
-        "AIPI called ping()",
-        flush=True
-    )
+    logger.info("ping() called")
 
     return "Hello from the Miss Minutes Raspberry Pi"
+
+
+# ==========================
+# QUEUE FILE HELPERS
+# ==========================
+
+def _rotate_queue_file_if_needed() -> None:
+    """
+    If the speech queue file has grown past SPEECH_QUEUE_MAX_BYTES,
+    archive it and start fresh. Prevents unbounded disk growth if
+    nothing is draining the file.
+    """
+
+    try:
+
+        if not os.path.exists(SPEECH_QUEUE_FILE):
+            return
+
+        size = os.path.getsize(SPEECH_QUEUE_FILE)
+
+        if size < SPEECH_QUEUE_MAX_BYTES:
+            return
+
+        archive_path = SPEECH_QUEUE_FILE + f".{int(time.time())}.bak"
+
+        os.replace(SPEECH_QUEUE_FILE, archive_path)
+
+        logger.warning(
+            "Speech queue exceeded %d bytes, rotated to %s",
+            SPEECH_QUEUE_MAX_BYTES,
+            archive_path
+        )
+
+    except Exception as error:
+
+        logger.error("Queue rotation check failed: %s", error)
+
+
+def _write_to_queue(text: str) -> bool:
+    """
+    Append text to the speech queue file. Returns True on success,
+    False on failure. Never raises.
+    """
+
+    try:
+
+        _rotate_queue_file_if_needed()
+
+        with open(
+            SPEECH_QUEUE_FILE,
+            "a"
+        ) as file:
+
+            fcntl.flock(file, fcntl.LOCK_EX)
+
+            try:
+                file.write(json.dumps(text) + "\n")
+                file.flush()
+                os.fsync(file.fileno())
+            finally:
+                fcntl.flock(file, fcntl.LOCK_UN)
+
+        return True
+
+    except Exception as error:
+
+        logger.error("Speech queue write failed: %s", error)
+
+        return False
 
 
 # ==========================
@@ -95,8 +192,7 @@ def speak_as_miss_minutes(final_response: str) -> str:
     exactly once per turn.
     """
 
-    text = final_response.strip()
-
+    text = (final_response or "").strip()
 
     # ==========================
     # IGNORE EMPTY RESPONSES
@@ -104,95 +200,61 @@ def speak_as_miss_minutes(final_response: str) -> str:
 
     if not text:
 
-        print(
-            "AIPI EMPTY SPEECH IGNORED",
-            flush=True
-        )
+        logger.warning("Empty speech ignored")
 
         return "Empty response ignored"
 
-
     # ==========================
-    # IGNORE EXACT DUPLICATES
+    # IGNORE EXACT BACK-TO-BACK DUPLICATES
     # ==========================
+    # Only blocks true immediate repeats (last N), not the same
+    # phrase said a few turns earlier.
 
-    if text == latest_text["text"]:
+    with _state_lock:
 
-        print(
-            f"AIPI DUPLICATE IGNORED: {text}",
-            flush=True
-        )
+        if _recent_texts and text == _recent_texts[-1]:
 
-        return "Duplicate Miss Minutes response ignored"
+            logger.info("Duplicate speech ignored: %s", text)
 
+            return "Duplicate Miss Minutes response ignored"
 
-    # ==========================
-    # UPDATE LATEST RESPONSE
-    # ==========================
+        # ==========================
+        # UPDATE LATEST RESPONSE (atomic w.r.t. readers)
+        # ==========================
 
-    latest_text["id"] += 1
-    latest_text["text"] = text
+        latest_text["id"] += 1
+        latest_text["text"] = text
+        latest_text["updated_at"] = time.time()
 
+        _recent_texts.append(text)
 
-    print(
-        f"MISS MINUTES RESPONSE: {text}",
-        flush=True
-    )
+        if len(_recent_texts) > _RECENT_TEXTS_MAX:
+            _recent_texts.pop(0)
 
+        new_id = latest_text["id"]
+
+    logger.info("Miss Minutes response #%d: %s", new_id, text)
 
     # ==========================
     # ADD TO SPEECH QUEUE
     # ==========================
 
-    try:
+    wrote_ok = _write_to_queue(text)
 
-        with open(
-            SPEECH_QUEUE_FILE,
-            "a"
-        ) as file:
+    if not wrote_ok:
 
-            fcntl.flock(
-                file,
-                fcntl.LOCK_EX
-            )
-
-            file.write(
-                json.dumps(text)
-                + "\n"
-            )
-
-            file.flush()
-
-            fcntl.flock(
-                file,
-                fcntl.LOCK_UN
-            )
-
-
-        print(
-            "Added response to Miss Minutes speech queue",
-            flush=True
-        )
-
-
-    except Exception as error:
-
-        print(
-            "Speech queue error:",
-            error,
-            flush=True
-        )
-
+        # latest_text has already advanced (so /latest-text reflects
+        # what SHOULD be spoken), but the persisted queue is missing
+        # this entry. Surface that clearly to the caller rather than
+        # returning a generic success message.
         return (
-            "Response received but "
-            "speech queue failed"
+            "Response accepted but failed to persist to the "
+            "speech queue - it may not be spoken aloud"
         )
 
+    logger.info("Queued response #%d for physical face", new_id)
 
-    return (
-        "Miss Minutes response queued "
-        "for physical face"
-    )
+    return "Miss Minutes response queued for physical face"
 
 
 # ==========================
@@ -205,8 +267,39 @@ def speak_as_miss_minutes(final_response: str) -> str:
 )
 async def latest_text_route(request):
 
+    with _state_lock:
+        snapshot = dict(latest_text)
+
     return JSONResponse(
-        latest_text,
+        snapshot,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store"
+        }
+    )
+
+
+# ==========================
+# HEALTH CHECK ROUTE
+# ==========================
+
+@mcp.custom_route(
+    "/health",
+    methods=["GET"]
+)
+async def health_route(request):
+
+    queue_exists = os.path.exists(SPEECH_QUEUE_FILE)
+    queue_size = (
+        os.path.getsize(SPEECH_QUEUE_FILE) if queue_exists else 0
+    )
+
+    return JSONResponse(
+        {
+            "status": "ok",
+            "queue_file_exists": queue_exists,
+            "queue_file_bytes": queue_size
+        },
         headers={
             "Access-Control-Allow-Origin": "*",
             "Cache-Control": "no-store"
