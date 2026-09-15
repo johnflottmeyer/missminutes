@@ -12,8 +12,8 @@ async def main():
         print(text)
 
         result = await client.call_tool(
-            "receive_text",
-            {"text": text}
+            "speak_as_miss_minutes",
+            {"final_response": text}
         )
 
         print("\nResult:")
