@@ -15,6 +15,19 @@ VNC_GEOMETRY="1920x1080"
 
 mkdir -p "$LOG_DIR"
 
+# ============================================================
+# LOAD SECRETS (MISSMINUTES_MCP_TOKEN, etc.)
+# ============================================================
+# Keeps the shared auth token for the MCP server out of this
+# script (and out of git). Create "$PROJECT_DIR/.env" on the Pi
+# with a line like: export MISSMINUTES_MCP_TOKEN="<long random string>"
+
+if [ -f "$PROJECT_DIR/.env" ]
+then
+    # shellcheck disable=SC1091
+    source "$PROJECT_DIR/.env"
+fi
+
 echo ""
 echo "======================================"
 echo " Starting Miss Minutes"
