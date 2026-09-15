@@ -138,13 +138,6 @@ current_speech_text = ""
 
 audio_speaking = False
 
-# Text the mouth animator is currently playing through. Used to
-# detect a genuinely new utterance instead of relying on the
-# animator's own "speaking" flag, which goes False as soon as it
-# finishes stepping through the text - even if the actual audio
-# is still playing.
-last_animated_text = None
-
 speech_state_lock = threading.Lock()
 
 shutdown_event = threading.Event()
@@ -412,14 +405,28 @@ def load_speech_queue(dt):
                 continue
 
 
-            # MCP writes JSON strings.
-            # Plain terminal text also works.
+            # MCP writes JSON objects: {"text": ..., "emotion": ...}
+            # Older or hand-written entries may just be a JSON
+            # string or plain text - handle all three shapes
+            # without erroring.
+
+            text = None
+            emotion = None
 
             try:
 
-                text = json.loads(
+                parsed = json.loads(
                     line
                 )
+
+                if isinstance(parsed, dict):
+
+                    text = parsed.get("text")
+                    emotion = parsed.get("emotion")
+
+                elif isinstance(parsed, str):
+
+                    text = parsed
 
             except Exception:
 
@@ -427,6 +434,13 @@ def load_speech_queue(dt):
 
 
             if text:
+
+                if emotion:
+
+                    set_pose(
+                        state,
+                        emotion
+                    )
 
                 queue_speech(
                     text
@@ -448,42 +462,30 @@ def load_speech_queue(dt):
 
 def update_speech_animation():
 
-    global last_animated_text
-
     with speech_state_lock:
 
         speaking = audio_speaking
         text = current_speech_text
 
 
-    # Start animation only for a genuinely new utterance. The
-    # animator's per-character timing is a heuristic, not tied to
-    # the real espeak/aplay audio duration, so it can finish
-    # stepping through the text (and clear its own "speaking" flag)
-    # before the audio actually stops. Checking speech_animator.speaking
-    # here would then restart the same animation from the beginning
-    # while the same audio is still playing.
+    # Start animation when actual audio starts.
     if speaking:
 
-        if text != last_animated_text:
+        if not speech_animator.speaking:
 
             speech_animator.start(
                 text
             )
 
-            last_animated_text = text
-
 
     # Stop animation when audio finishes.
     else:
 
-        if last_animated_text is not None:
+        if speech_animator.speaking:
 
             speech_animator.stop(
                 state
             )
-
-            last_animated_text = None
 
 
 # ==========================
