@@ -5,7 +5,9 @@ import fcntl
 import logging
 import threading
 
-from mcp.server.fastmcp import FastMCP
+import uvicorn
+
+from mcp.server import MCPServer
 from starlette.responses import JSONResponse
 
 
@@ -21,10 +23,76 @@ logger = logging.getLogger("miss_minutes")
 
 
 # ==========================
+# AUTH
+# ==========================
+# This server is reachable from the public internet via an ngrok
+# tunnel (see start_missminutes.sh), and receive_text lets any
+# caller make the physical device say arbitrary text. Require a
+# shared-secret bearer token on every request so a leaked/guessed
+# tunnel URL alone isn't enough to use it.
+#
+# Set this on the Pi before starting the server, e.g. in the shell
+# profile or a .env file loaded by start_missminutes.sh:
+#   export MISSMINUTES_MCP_TOKEN="<a long random string>"
+
+MCP_AUTH_TOKEN = os.environ.get(
+    "MISSMINUTES_MCP_TOKEN",
+    ""
+)
+
+# Routes that stay reachable without the token - status only,
+# nothing that reveals speech content or accepts input.
+PUBLIC_PATHS = {
+    "/health"
+}
+
+
+class BearerTokenMiddleware:
+    """
+    Minimal ASGI middleware requiring "Authorization: Bearer <token>"
+    on every HTTP request except PUBLIC_PATHS.
+    """
+
+    def __init__(self, app, token):
+
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope, receive, send):
+
+        if (
+            scope["type"] != "http"
+            or scope["path"] in PUBLIC_PATHS
+        ):
+
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers") or [])
+
+        auth_header = headers.get(
+            b"authorization",
+            b""
+        ).decode()
+
+        if auth_header != f"Bearer {self.token}":
+
+            response = JSONResponse(
+                {"error": "unauthorized"},
+                status_code=401
+            )
+
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
+# ==========================
 # MCP SERVER
 # ==========================
 
-mcp = FastMCP("Miss Minutes MCP")
+mcp = MCPServer("Miss Minutes MCP")
 
 
 # ==========================
@@ -339,8 +407,28 @@ async def health_route(request):
 
 if __name__ == "__main__":
 
-    mcp.run(
-        transport="streamable-http",
+    if not MCP_AUTH_TOKEN:
+
+        raise SystemExit(
+            "MISSMINUTES_MCP_TOKEN is not set. Refusing to start: this "
+            "server is exposed publicly via ngrok, and receive_text would "
+            "let anyone with the tunnel URL make the physical device speak "
+            "arbitrary text. Set MISSMINUTES_MCP_TOKEN to a long random "
+            "string before starting."
+        )
+
+    app = mcp.streamable_http_app(
+        host="0.0.0.0"
+    )
+
+    app = BearerTokenMiddleware(
+        app,
+        MCP_AUTH_TOKEN
+    )
+
+    uvicorn.run(
+        app,
         host="0.0.0.0",
-        port=8000
+        port=8000,
+        log_level="info"
     )

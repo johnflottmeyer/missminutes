@@ -41,13 +41,14 @@ async def main():
 
     async with Client(transport) as client:
         text = "Well hey there, sugar."
+        emotion = "happy"
 
         print("\nSending text to Miss Minutes...")
         print(text)
 
         result = await client.call_tool(
-            "speak_as_miss_minutes",
-            {"final_response": text}
+            "receive_text",
+            {"text": text, "emotion": emotion}
         )
 
         print("\nResult:")
