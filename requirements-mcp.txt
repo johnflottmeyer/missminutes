@@ -1,0 +1,11 @@
+# MCP server (missminutes_mcp.py). The mcp package requires Python
+# >= 3.10 for every published version - no version of it will ever
+# install under Raspberry Pi OS Bullseye's system Python 3.9. Install
+# this into a venv built from a newer Python (e.g. via pyenv), not
+# the system interpreter. See requirements.txt for the display
+# process's dependencies, which stay on the system Python.
+
+mcp>=2.2.0
+starlette>=0.27
+uvicorn>=0.31.1
+httpx2>=2.5.0

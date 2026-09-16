@@ -5,7 +5,13 @@
 # ============================================================
 
 PROJECT_DIR="/home/mminutes/missminutes"
-VENV="$PROJECT_DIR/.venv"
+
+# The MCP server needs Python >= 3.10 (every mcp package version
+# requires it); the system Python on Raspberry Pi OS Bullseye is
+# 3.9. Build this venv with a newer Python via pyenv - see
+# requirements-mcp.txt for the one-time setup.
+VENV_MCP="$PROJECT_DIR/.venv-mcp"
+
 LOG_DIR="$PROJECT_DIR/logs"
 
 MCP_PORT=8000
@@ -72,11 +78,17 @@ else
 
     cd "$PROJECT_DIR" || exit 1
 
-    nohup "$VENV/bin/python" \
-        missminutes_mcp.py \
-        > "$LOG_DIR/mcp.log" 2>&1 &
+    if [ ! -x "$VENV_MCP/bin/python" ]
+    then
+        echo "[ERROR] $VENV_MCP not found - see requirements-mcp.txt" \
+            "for the one-time pyenv/venv setup"
+    else
+        nohup "$VENV_MCP/bin/python" \
+            missminutes_mcp.py \
+            > "$LOG_DIR/mcp.log" 2>&1 &
 
-    sleep 2
+        sleep 2
+    fi
 
 fi
 

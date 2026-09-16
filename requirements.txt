@@ -1,5 +1,5 @@
+# Display / animation process (main.py). Runs under the system
+# Python (3.9 on Raspberry Pi OS Bullseye) - pygame supports it fine.
+# For the MCP server's dependencies, see requirements-mcp.txt.
+
 pygame>=2.5
-mcp>=2.2.0
-starlette>=0.27
-uvicorn>=0.31.1
-httpx2>=2.5.0
