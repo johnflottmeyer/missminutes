@@ -22,6 +22,16 @@ VENV_MCP="$PROJECT_DIR/.venv-mcp"
 # never affect this.
 SYSTEM_PYTHON="/usr/bin/python3"
 
+# This Pi's locale resolves Python's default text encoding to
+# latin-1 rather than UTF-8, and AIPI-generated text routinely
+# contains characters outside latin-1 (curly quotes, em dashes) -
+# that broke stdout printing, log file writes, and subprocess
+# argument encoding one at a time as each was discovered. Force
+# Python's UTF-8 mode (PEP 540) for every process this script
+# launches so any other locale-dependent spot is covered too,
+# not just the ones already patched in code.
+export PYTHONUTF8=1
+
 LOG_DIR="$PROJECT_DIR/logs"
 
 MCP_PORT=8000

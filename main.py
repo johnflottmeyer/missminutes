@@ -257,13 +257,23 @@ def audio_worker():
             # Generate WAV stream with espeak-ng
             # ----------------------------------
 
+            # subprocess encodes str arguments using the filesystem
+            # encoding, which on this Pi resolves to latin-1 rather
+            # than UTF-8 - the same underlying issue that hit
+            # stdout and the log files. AIPI text routinely contains
+            # characters outside latin-1 (curly quotes, em dashes),
+            # so encode explicitly to UTF-8 bytes here rather than
+            # relying on locale-dependent argument encoding.
             espeak_process = subprocess.Popen(
                 [
                     "espeak-ng",
                     "-s",
                     str(ESPEAK_SPEED),
                     "--stdout",
-                    text
+                    text.encode(
+                        "utf-8",
+                        errors="replace"
+                    )
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL
