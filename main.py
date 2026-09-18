@@ -1,5 +1,6 @@
 import math
 import os
+import re
 import sys
 import json
 import fcntl
@@ -65,9 +66,69 @@ SPEECH_LOG_FILE = os.path.join(
     "speech.log"
 )
 
-ESPEAK_SPEED = 160
+# Requires the "flite" and "sox" apt packages (plus "aplay" from
+# alsa-utils, already needed before). flite's default output level
+# is much quieter than espeak-ng's was, hence the sox normalize
+# pass in audio_worker().
+FLITE_VOICE = "slt"
+
+SPEECH_TEMP_WAV = "/tmp/missminutes_speech.wav"
+SPEECH_TEMP_WAV_NORM = "/tmp/missminutes_speech_norm.wav"
 
 SPEECH_CHECK_INTERVAL = 0.10
+
+
+# ==========================
+# SOUTHERN ACCENT (SPOKEN TEXT ONLY)
+# ==========================
+# Neither flite nor espeak-ng support accents as a parameter - this
+# is a light, easily-tunable word substitution applied ONLY to the
+# text handed to the TTS engine. Subtitles and speech.log keep the
+# original text so they stay readable; only what gets spoken is
+# respelled. Whole-word/phrase, case-insensitive matches only, to
+# avoid mangling unrelated text (e.g. "you" inside "yourself").
+#
+# Deliberately does not touch "-ing" word endings - a blanket
+# "-in'" suffix swap would also hit non-verbs like "thing" or
+# "morning", so that's left alone rather than guessed at.
+
+SOUTHERN_RESPELLINGS = {
+    "you": "ya",
+    "your": "yer",
+    "about": "'bout",
+    "going to": "gonna",
+    "want to": "wanna",
+    "kind of": "kinda",
+    "sugar": "shugah",
+}
+
+SOUTHERN_WORD_PATTERN = re.compile(
+    r"\b("
+    + "|".join(
+        re.escape(word)
+        for word in sorted(
+            SOUTHERN_RESPELLINGS,
+            key=len,
+            reverse=True
+        )
+    )
+    + r")\b",
+    re.IGNORECASE
+)
+
+
+def apply_southern_accent(text):
+
+    def replace(match):
+
+        return SOUTHERN_RESPELLINGS[
+            match.group(0).lower()
+        ]
+
+    return SOUTHERN_WORD_PATTERN.sub(
+        replace,
+        text
+    )
 
 
 # ==========================
@@ -254,57 +315,78 @@ def audio_worker():
         try:
 
             # ----------------------------------
-            # Generate WAV stream with espeak-ng
+            # Nudge spoken text toward a Southern
+            # drawl. Subtitles and speech.log above
+            # already used the original text - only
+            # what actually gets synthesized changes.
             # ----------------------------------
 
-            # subprocess encodes str arguments using the filesystem
-            # encoding, which on this Pi resolves to latin-1 rather
-            # than UTF-8 - the same underlying issue that hit
-            # stdout and the log files. AIPI text routinely contains
-            # characters outside latin-1 (curly quotes, em dashes),
-            # so encode explicitly to UTF-8 bytes here rather than
-            # relying on locale-dependent argument encoding.
-            espeak_process = subprocess.Popen(
-                [
-                    "espeak-ng",
-                    "-s",
-                    str(ESPEAK_SPEED),
-                    "--stdout",
-                    text.encode(
-                        "utf-8",
-                        errors="replace"
-                    )
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL
+            spoken_text = apply_southern_accent(
+                text
             )
 
 
             # ----------------------------------
-            # Send stream to ALSA
+            # Synthesize with flite
             # ----------------------------------
 
-            aplay_process = subprocess.Popen(
+            # subprocess encodes str arguments using the filesystem
+            # encoding, which on this Pi resolves to latin-1 rather
+            # than UTF-8 - the same issue that hit stdout and the
+            # log files. Encode explicitly to UTF-8 bytes rather
+            # than relying on locale-dependent argument encoding.
+            subprocess.run(
                 [
-                    "aplay"
+                    "flite",
+                    "-voice",
+                    FLITE_VOICE,
+                    "-o",
+                    SPEECH_TEMP_WAV,
+                    "-t",
+                    spoken_text.encode(
+                        "utf-8",
+                        errors="replace"
+                    )
                 ],
-                stdin=espeak_process.stdout,
+                check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
 
 
-            # Parent does not need this copy.
-            espeak_process.stdout.close()
+            # ----------------------------------
+            # Normalize volume - flite's raw
+            # output is much quieter than
+            # espeak-ng's was.
+            # ----------------------------------
+
+            subprocess.run(
+                [
+                    "sox",
+                    SPEECH_TEMP_WAV,
+                    SPEECH_TEMP_WAV_NORM,
+                    "gain",
+                    "-n"
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
 
 
             # ----------------------------------
-            # Wait for audio to finish
+            # Play through ALSA
             # ----------------------------------
 
-            aplay_process.wait()
-
-            espeak_process.wait()
+            subprocess.run(
+                [
+                    "aplay",
+                    SPEECH_TEMP_WAV_NORM
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
 
 
             log_speech(
