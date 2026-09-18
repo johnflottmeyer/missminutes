@@ -8,6 +8,23 @@ import threading
 import subprocess
 from datetime import datetime
 
+# AIPI-generated text routinely contains characters outside ASCII
+# (em dashes, curly quotes, ellipses). When stdout/stderr are
+# redirected to a log file (as start_missminutes.sh does), Python
+# picks an encoding from the locale instead of a terminal's UTF-8,
+# which on this Pi resolves to latin-1 - so printing that text
+# raised UnicodeEncodeError and silently dropped it (and everything
+# still queued behind it in the same read). Force UTF-8 explicitly.
+sys.stdout.reconfigure(
+    encoding="utf-8",
+    errors="replace"
+)
+
+sys.stderr.reconfigure(
+    encoding="utf-8",
+    errors="replace"
+)
+
 import pygame
 
 from renderer import draw_character
@@ -170,7 +187,8 @@ def log_speech(event, text):
 
         with open(
             SPEECH_LOG_FILE,
-            "a"
+            "a",
+            encoding="utf-8"
         ) as file:
 
             file.write(
@@ -381,7 +399,8 @@ def load_speech_queue(dt):
 
         with open(
             SPEECH_QUEUE_FILE,
-            "r+"
+            "r+",
+            encoding="utf-8"
         ) as file:
 
             fcntl.flock(
@@ -405,52 +424,68 @@ def load_speech_queue(dt):
 
         for line in lines:
 
-            line = line.strip()
-
-
-            if not line:
-                continue
-
-
-            # MCP writes JSON objects: {"text": ..., "emotion": ...}
-            # Older or hand-written entries may just be a JSON
-            # string or plain text - handle all three shapes
-            # without erroring.
-
-            text = None
-            emotion = None
-
+            # Each line is handled independently so one bad entry
+            # (a parse error, an encoding issue, anything else)
+            # can't take the rest of this batch down with it - that
+            # used to abort the whole for-loop, silently dropping
+            # every line still waiting behind the one that failed.
             try:
 
-                parsed = json.loads(
-                    line
-                )
-
-                if isinstance(parsed, dict):
-
-                    text = parsed.get("text")
-                    emotion = parsed.get("emotion")
-
-                elif isinstance(parsed, str):
-
-                    text = parsed
-
-            except Exception:
-
-                text = line
+                line = line.strip()
 
 
-            if text:
+                if not line:
+                    continue
 
-                if emotion:
 
-                    set_pose(
-                        state,
-                        emotion
+                # MCP writes JSON objects: {"text": ..., "emotion": ...}
+                # Older or hand-written entries may just be a JSON
+                # string or plain text - handle all three shapes
+                # without erroring.
+
+                text = None
+                emotion = None
+
+                try:
+
+                    parsed = json.loads(
+                        line
                     )
 
-                queue_speech(
-                    text
+                    if isinstance(parsed, dict):
+
+                        text = parsed.get("text")
+                        emotion = parsed.get("emotion")
+
+                    elif isinstance(parsed, str):
+
+                        text = parsed
+
+                except Exception:
+
+                    text = line
+
+
+                if text:
+
+                    if emotion:
+
+                        set_pose(
+                            state,
+                            emotion
+                        )
+
+                    queue_speech(
+                        text
+                    )
+
+
+            except Exception as error:
+
+                print(
+                    "Speech queue entry error:",
+                    error,
+                    flush=True
                 )
 
 
