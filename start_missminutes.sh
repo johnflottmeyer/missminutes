@@ -12,6 +12,16 @@ PROJECT_DIR="/home/mminutes/missminutes"
 # requirements-mcp.txt for the one-time setup.
 VENV_MCP="$PROJECT_DIR/.venv-mcp"
 
+# The display process (main.py) needs pygame, which is only
+# installed for the system Python (requirements.txt). A bare
+# "python3" would instead resolve to whatever's first on PATH -
+# including .venv-mcp's Python 3.11 if that venv happens to be
+# active in whatever shell runs this script, which has no pygame
+# and fails with ModuleNotFoundError. Pin this to the system
+# interpreter explicitly so activating .venv-mcp elsewhere can
+# never affect this.
+SYSTEM_PYTHON="/usr/bin/python3"
+
 LOG_DIR="$PROJECT_DIR/logs"
 
 MCP_PORT=8000
@@ -129,7 +139,7 @@ else
 
     cd "$PROJECT_DIR" || exit 1
 
-    DISPLAY=:0 nohup python3 main.py \
+    DISPLAY=:0 nohup "$SYSTEM_PYTHON" main.py \
         > "$LOG_DIR/pygame.log" 2>&1 &
 
     sleep 2
