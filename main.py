@@ -1,30 +1,13 @@
 import math
 import os
-import re
 import sys
 import json
+import time
 import fcntl
 import queue
 import threading
 import subprocess
 from datetime import datetime
-
-# AIPI-generated text routinely contains characters outside ASCII
-# (em dashes, curly quotes, ellipses). When stdout/stderr are
-# redirected to a log file (as start_missminutes.sh does), Python
-# picks an encoding from the locale instead of a terminal's UTF-8,
-# which on this Pi resolves to latin-1 - so printing that text
-# raised UnicodeEncodeError and silently dropped it (and everything
-# still queued behind it in the same read). Force UTF-8 explicitly.
-sys.stdout.reconfigure(
-    encoding="utf-8",
-    errors="replace"
-)
-
-sys.stderr.reconfigure(
-    encoding="utf-8",
-    errors="replace"
-)
 
 import pygame
 
@@ -33,6 +16,7 @@ from character_state import CharacterState
 from poses import set_pose
 from idle import IdleAnimator
 from speech import SpeechAnimator
+from audio_analysis import analyze_wav
 
 
 # ==========================
@@ -66,69 +50,15 @@ SPEECH_LOG_FILE = os.path.join(
     "speech.log"
 )
 
-# Requires the "flite" and "sox" apt packages (plus "aplay" from
-# alsa-utils, already needed before). flite's default output level
-# is much quieter than espeak-ng's was, hence the sox normalize
-# pass in audio_worker().
-FLITE_VOICE = "slt"
-
-SPEECH_TEMP_WAV = "/tmp/missminutes_speech.wav"
-SPEECH_TEMP_WAV_NORM = "/tmp/missminutes_speech_norm.wav"
+ESPEAK_SPEED = 160
 
 SPEECH_CHECK_INTERVAL = 0.10
 
-
-# ==========================
-# SOUTHERN ACCENT (SPOKEN TEXT ONLY)
-# ==========================
-# Neither flite nor espeak-ng support accents as a parameter - this
-# is a light, easily-tunable word substitution applied ONLY to the
-# text handed to the TTS engine. Subtitles and speech.log keep the
-# original text so they stay readable; only what gets spoken is
-# respelled. Whole-word/phrase, case-insensitive matches only, to
-# avoid mangling unrelated text (e.g. "you" inside "yourself").
-#
-# Deliberately does not touch "-ing" word endings - a blanket
-# "-in'" suffix swap would also hit non-verbs like "thing" or
-# "morning", so that's left alone rather than guessed at.
-
-SOUTHERN_RESPELLINGS = {
-    "you": "ya",
-    "your": "yer",
-    "about": "'bout",
-    "going to": "gonna",
-    "want to": "wanna",
-    "kind of": "kinda",
-    "sugar": "shugah",
-}
-
-SOUTHERN_WORD_PATTERN = re.compile(
-    r"\b("
-    + "|".join(
-        re.escape(word)
-        for word in sorted(
-            SOUTHERN_RESPELLINGS,
-            key=len,
-            reverse=True
-        )
-    )
-    + r")\b",
-    re.IGNORECASE
-)
-
-
-def apply_southern_accent(text):
-
-    def replace(match):
-
-        return SOUTHERN_RESPELLINGS[
-            match.group(0).lower()
-        ]
-
-    return SOUTHERN_WORD_PATTERN.sub(
-        replace,
-        text
-    )
+# Print average FPS to the console once a second. Pure diagnostic -
+# on a Pi 3B this is the fastest way to tell whether roughness is a
+# dropped-frames problem (fix that first) or an animation-logic
+# problem (the frame rate is fine, the motion itself needs work).
+FPS_LOG_INTERVAL = 1.0
 
 
 # ==========================
@@ -173,6 +103,29 @@ clock = pygame.time.Clock()
 
 
 # ==========================
+# FIXED CANVAS PLACEMENT
+# ==========================
+# The canvas position on screen never changes, so it's computed once
+# here instead of every frame. The letterbox bars around it are
+# filled black once, before the loop starts, instead of re-filling
+# the full screen at full resolution every frame - only the canvas
+# region itself needs to be redrawn each frame.
+
+CANVAS_X = (
+    SCREEN_WIDTH
+    - CANVAS_WIDTH
+) // 2
+
+CANVAS_Y = (
+    SCREEN_HEIGHT
+    - CANVAS_HEIGHT
+) // 2
+
+screen.fill(BLACK)
+pygame.display.flip()
+
+
+# ==========================
 # SUBTITLE FONT
 # ==========================
 
@@ -207,21 +160,24 @@ speech_animator = SpeechAnimator()
 # ==========================
 # SPEECH STATE
 # ==========================
+# Everything under speech_state_lock is written by audio_worker()
+# (a background thread) and read by the main pygame thread. Only
+# the background thread writes to these fields; only the main
+# thread calls into speech_animator - that split is what makes the
+# lock sufficient without also needing to guard speech_animator
+# itself.
 
 audio_queue = queue.Queue()
 
 speech_check_timer = 0.0
 
 current_speech_text = ""
+current_speech_start_time = None
+current_speech_duration = None
+current_speech_envelope = None
+current_speech_envelope_window = None
 
 audio_speaking = False
-
-# Text the mouth animator is currently playing through. Used to
-# detect a genuinely new utterance instead of relying on the
-# animator's own "speaking" flag, which goes False as soon as it
-# finishes stepping through the text - even if the actual audio
-# is still playing.
-last_animated_text = None
 
 speech_state_lock = threading.Lock()
 
@@ -248,8 +204,7 @@ def log_speech(event, text):
 
         with open(
             SPEECH_LOG_FILE,
-            "a",
-            encoding="utf-8"
+            "a"
         ) as file:
 
             file.write(
@@ -272,6 +227,10 @@ def log_speech(event, text):
 def audio_worker():
 
     global current_speech_text
+    global current_speech_start_time
+    global current_speech_duration
+    global current_speech_envelope
+    global current_speech_envelope_window
     global audio_speaking
 
 
@@ -294,12 +253,6 @@ def audio_worker():
             break
 
 
-        with speech_state_lock:
-
-            current_speech_text = text
-            audio_speaking = True
-
-
         print(
             "Speaking:",
             text,
@@ -315,77 +268,67 @@ def audio_worker():
         try:
 
             # ----------------------------------
-            # Nudge spoken text toward a Southern
-            # drawl. Subtitles and speech.log above
-            # already used the original text - only
-            # what actually gets synthesized changes.
+            # Generate the full WAV in memory first (instead of
+            # streaming straight into aplay) so its real duration
+            # and loudness can be measured before/while it plays.
+            # espeak-ng is not a neural model - generating a
+            # sentence takes a few milliseconds even on a Pi 3B, so
+            # this doesn't reintroduce the kind of delay a heavier
+            # TTS engine caused.
             # ----------------------------------
 
-            spoken_text = apply_southern_accent(
-                text
+            espeak_result = subprocess.run(
+                [
+                    "espeak-ng",
+                    "-s",
+                    str(ESPEAK_SPEED),
+                    "--stdout",
+                    text
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL
+            )
+
+            wav_bytes = espeak_result.stdout
+
+
+            duration, envelope, envelope_window = analyze_wav(
+                wav_bytes
             )
 
 
             # ----------------------------------
-            # Synthesize with flite
+            # Publish speech state BEFORE launching aplay, and
+            # capture start_time right at that point - this is the
+            # closest available proxy for "when the audio actually
+            # started", used to drive the mouth off a wall clock
+            # instead of accumulated per-frame dt (which drifted on
+            # long sentences in the old version).
             # ----------------------------------
 
-            # subprocess encodes str arguments using the filesystem
-            # encoding, which on this Pi resolves to latin-1 rather
-            # than UTF-8 - the same issue that hit stdout and the
-            # log files. Encode explicitly to UTF-8 bytes rather
-            # than relying on locale-dependent argument encoding.
-            subprocess.run(
+            start_time = time.monotonic()
+
+            with speech_state_lock:
+
+                current_speech_text = text
+                current_speech_start_time = start_time
+                current_speech_duration = duration
+                current_speech_envelope = envelope
+                current_speech_envelope_window = envelope_window
+                audio_speaking = True
+
+
+            aplay_process = subprocess.Popen(
                 [
-                    "flite",
-                    "-voice",
-                    FLITE_VOICE,
-                    "-o",
-                    SPEECH_TEMP_WAV,
-                    "-t",
-                    spoken_text.encode(
-                        "utf-8",
-                        errors="replace"
-                    )
+                    "aplay"
                 ],
-                check=True,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
 
-
-            # ----------------------------------
-            # Normalize volume - flite's raw
-            # output is much quieter than
-            # espeak-ng's was.
-            # ----------------------------------
-
-            subprocess.run(
-                [
-                    "sox",
-                    SPEECH_TEMP_WAV,
-                    SPEECH_TEMP_WAV_NORM,
-                    "gain",
-                    "-n"
-                ],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-
-
-            # ----------------------------------
-            # Play through ALSA
-            # ----------------------------------
-
-            subprocess.run(
-                [
-                    "aplay",
-                    SPEECH_TEMP_WAV_NORM
-                ],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+            aplay_process.communicate(
+                input=wav_bytes
             )
 
 
@@ -415,6 +358,10 @@ def audio_worker():
 
                 audio_speaking = False
                 current_speech_text = ""
+                current_speech_start_time = None
+                current_speech_duration = None
+                current_speech_envelope = None
+                current_speech_envelope_window = None
 
 
             audio_queue.task_done()
@@ -491,8 +438,7 @@ def load_speech_queue(dt):
 
         with open(
             SPEECH_QUEUE_FILE,
-            "r+",
-            encoding="utf-8"
+            "r+"
         ) as file:
 
             fcntl.flock(
@@ -516,68 +462,52 @@ def load_speech_queue(dt):
 
         for line in lines:
 
-            # Each line is handled independently so one bad entry
-            # (a parse error, an encoding issue, anything else)
-            # can't take the rest of this batch down with it - that
-            # used to abort the whole for-loop, silently dropping
-            # every line still waiting behind the one that failed.
+            line = line.strip()
+
+
+            if not line:
+                continue
+
+
+            # MCP writes JSON objects: {"text": ..., "emotion": ...}.
+            # Older or hand-written entries may just be a JSON
+            # string or plain text - handle all three shapes
+            # without erroring.
+
+            text = None
+            emotion = None
+
             try:
 
-                line = line.strip()
+                parsed = json.loads(
+                    line
+                )
+
+                if isinstance(parsed, dict):
+
+                    text = parsed.get("text")
+                    emotion = parsed.get("emotion")
+
+                elif isinstance(parsed, str):
+
+                    text = parsed
+
+            except Exception:
+
+                text = line
 
 
-                if not line:
-                    continue
+            if text:
 
+                if emotion:
 
-                # MCP writes JSON objects: {"text": ..., "emotion": ...}
-                # Older or hand-written entries may just be a JSON
-                # string or plain text - handle all three shapes
-                # without erroring.
-
-                text = None
-                emotion = None
-
-                try:
-
-                    parsed = json.loads(
-                        line
+                    set_pose(
+                        state,
+                        emotion
                     )
 
-                    if isinstance(parsed, dict):
-
-                        text = parsed.get("text")
-                        emotion = parsed.get("emotion")
-
-                    elif isinstance(parsed, str):
-
-                        text = parsed
-
-                except Exception:
-
-                    text = line
-
-
-                if text:
-
-                    if emotion:
-
-                        set_pose(
-                            state,
-                            emotion
-                        )
-
-                    queue_speech(
-                        text
-                    )
-
-
-            except Exception as error:
-
-                print(
-                    "Speech queue entry error:",
-                    error,
-                    flush=True
+                queue_speech(
+                    text
                 )
 
 
@@ -595,43 +525,49 @@ def load_speech_queue(dt):
 # ==========================
 
 def update_speech_animation():
-
-    global last_animated_text
+    """
+    Detects speaking-state transitions and starts/stops
+    speech_animator accordingly. This (and speech_animator itself)
+    only ever runs on the main thread - audio_worker only writes the
+    shared fields above, it never touches speech_animator directly.
+    """
 
     with speech_state_lock:
 
         speaking = audio_speaking
         text = current_speech_text
+        start_time = current_speech_start_time
+        duration = current_speech_duration
+        envelope = current_speech_envelope
+        envelope_window = current_speech_envelope_window
 
 
-    # Start animation only for a genuinely new utterance. The
-    # animator's per-character timing is a heuristic, not tied to
-    # the real espeak/aplay audio duration, so it can finish
-    # stepping through the text (and clear its own "speaking" flag)
-    # before the audio actually stops. Checking speech_animator.speaking
-    # here would then restart the same animation from the beginning
-    # while the same audio is still playing.
+    # Start animation when actual audio starts.
     if speaking:
 
-        if text != last_animated_text:
+        if not speech_animator.speaking:
 
-            speech_animator.start(
-                text
+            speech_animator.start_audio(
+                text,
+                duration,
+                envelope,
+                envelope_window,
+                start_time=start_time
             )
 
-            last_animated_text = text
 
-
-    # Stop animation when audio finishes.
+    # Stop animation when audio finishes. speech_animator normally
+    # already stops itself once its own elapsed-time tracking passes
+    # the clip's duration, but this flag-driven stop is the ultimate
+    # authority - it also covers cases like duration analysis having
+    # failed, or aplay exiting earlier or later than expected.
     else:
 
-        if last_animated_text is not None:
+        if speech_animator.speaking:
 
             speech_animator.stop(
                 state
             )
-
-            last_animated_text = None
 
 
 # ==========================
@@ -691,6 +627,58 @@ def wrap_text(text, font, max_width):
 
 
 # ==========================
+# SUBTITLE CACHE
+# ==========================
+# Rendering text and word-wrapping it are both real costs when done
+# every frame at 30 FPS. The subtitle text only actually changes
+# when speech does, so cache the wrapped/rendered surfaces and only
+# rebuild them when current_speech_text is different from last time.
+
+_subtitle_cache_text = None
+_subtitle_cache_surfaces = []
+
+
+def get_subtitle_surfaces(text):
+
+    global _subtitle_cache_text
+    global _subtitle_cache_surfaces
+
+
+    if text == _subtitle_cache_text:
+        return _subtitle_cache_surfaces
+
+
+    max_width = CANVAS_WIDTH - 30
+
+    lines = wrap_text(
+        text,
+        subtitle_font,
+        max_width
+    )
+
+    lines = lines[-5:]
+
+
+    surfaces = [
+
+        subtitle_font.render(
+            line,
+            True,
+            WHITE
+        )
+
+        for line in lines
+    ]
+
+
+    _subtitle_cache_text = text
+    _subtitle_cache_surfaces = surfaces
+
+
+    return surfaces
+
+
+# ==========================
 # DRAW SUBTITLES
 # ==========================
 
@@ -706,24 +694,15 @@ def draw_subtitles():
         return
 
 
-    max_width = CANVAS_WIDTH - 30
-
-    lines = wrap_text(
-        text,
-        subtitle_font,
-        max_width
+    surfaces = get_subtitle_surfaces(
+        text
     )
-
-
-    # Limit how much of the screen subtitles
-    # can occupy.
-    lines = lines[-5:]
 
 
     line_height = 21
 
     total_height = (
-        len(lines)
+        len(surfaces)
         * line_height
     )
 
@@ -735,14 +714,7 @@ def draw_subtitles():
     )
 
 
-    for index, line in enumerate(lines):
-
-        text_surface = subtitle_font.render(
-            line,
-            True,
-            WHITE
-        )
-
+    for index, text_surface in enumerate(surfaces):
 
         text_rect = text_surface.get_rect()
 
@@ -799,6 +771,30 @@ test_line_index = 0
 
 
 # ==========================
+# FPS LOGGING
+# ==========================
+
+_fps_log_timer = 0.0
+
+
+def log_fps(dt):
+
+    global _fps_log_timer
+
+    _fps_log_timer += dt
+
+    if _fps_log_timer < FPS_LOG_INTERVAL:
+        return
+
+    _fps_log_timer = 0.0
+
+    print(
+        f"FPS: {clock.get_fps():.1f}",
+        flush=True
+    )
+
+
+# ==========================
 # DRAW FRAME
 # ==========================
 
@@ -849,6 +845,9 @@ def draw_frame(dt):
     # ==========================
     # ANIMATION UPDATES
     # ==========================
+    # Order matters: speech and idle set *targets* for the frame,
+    # then state.update_smoothing() eases the displayed values
+    # toward whatever was just set. Smoothing must run after both.
 
     speech_animator.update(
         state,
@@ -865,6 +864,11 @@ def draw_frame(dt):
         state,
         dt,
         speaking
+    )
+
+
+    state.update_smoothing(
+        dt
     )
 
 
@@ -888,34 +892,26 @@ def draw_frame(dt):
     # ==========================
     # PHYSICAL DISPLAY
     # ==========================
-
-    screen.fill(
-        BLACK
-    )
-
-
-    canvas_x = (
-        SCREEN_WIDTH
-        - CANVAS_WIDTH
-    ) // 2
-
-
-    canvas_y = (
-        SCREEN_HEIGHT
-        - CANVAS_HEIGHT
-    ) // 2
-
+    # The letterbox bars around the canvas never change, so only the
+    # canvas region is redrawn each frame (see CANVAS_X/CANVAS_Y -
+    # the full-screen black fill happens once, before the loop
+    # starts).
 
     screen.blit(
         canvas,
         (
-            canvas_x,
-            canvas_y
+            CANVAS_X,
+            CANVAS_Y
         )
     )
 
 
     pygame.display.flip()
+
+
+    log_fps(
+        dt
+    )
 
 
 # ==========================
