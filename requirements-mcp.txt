@@ -1,11 +1,16 @@
-# MCP server (missminutes_mcp.py). The mcp package requires Python
-# >= 3.10 for every published version - no version of it will ever
-# install under Raspberry Pi OS Bullseye's system Python 3.9. Install
-# this into a venv built from a newer Python (e.g. via pyenv), not
-# the system interpreter. See requirements.txt for the display
-# process's dependencies, which stay on the system Python.
+# The MCP server (missminutes_mcp.py) requires Python >= 3.10, so it
+# runs in its own venv (.venv-mcp) separate from the system Python 3.9
+# used for the Pygame display process (main.py) on Raspberry Pi OS
+# Bullseye. See start_missminutes.sh.
+#
+# NOTE: the previous floor here was "mcp>=2.2.0" - I could not confirm
+# a 2.2.0 release actually exists (couldn't reach PyPI to check), so
+# I've dropped it to a version I could directly confirm works with
+# this code (FastMCP, .streamable_http_app(), ClientSession, the
+# streamable_http_client transport). Worth double-checking against
+# PyPI for the latest stable release before locking a floor.
 
-mcp>=2.2.0
+mcp>=1.2.0
 starlette>=0.27
 uvicorn>=0.31.1
-httpx2>=2.5.0
+httpx>=0.27.0
