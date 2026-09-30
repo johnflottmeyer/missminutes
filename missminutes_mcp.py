@@ -7,7 +7,7 @@ import threading
 
 import uvicorn
 
-from mcp.server import MCPServer
+from mcp.server.fastmcp import FastMCP
 from starlette.responses import JSONResponse
 
 
@@ -91,8 +91,12 @@ class BearerTokenMiddleware:
 # ==========================
 # MCP SERVER
 # ==========================
+# FastMCP is the real class the installed `mcp` package exports for
+# this (mcp.server.fastmcp.FastMCP) - there is no `MCPServer` class
+# in mcp.server. It's what supplies .tool(), .custom_route() and
+# .streamable_http_app() below.
 
-mcp = MCPServer("Miss Minutes MCP")
+mcp = FastMCP("Miss Minutes MCP")
 
 
 # ==========================
@@ -417,9 +421,9 @@ if __name__ == "__main__":
             "string before starting."
         )
 
-    app = mcp.streamable_http_app(
-        host="0.0.0.0"
-    )
+    # streamable_http_app() takes no arguments - host/port are set
+    # below, on uvicorn.run() itself.
+    app = mcp.streamable_http_app()
 
     app = BearerTokenMiddleware(
         app,
