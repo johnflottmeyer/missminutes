@@ -1,58 +1,48 @@
 import asyncio
 import os
 
-import httpx2
+import httpx
 
-from mcp import Client
-from mcp.client.streamable_http import streamable_http_client
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 
-
-# Point this at your own tunnel/host - never hardcode a live URL here.
-MCP_URL = os.environ.get(
-    "MISSMINUTES_MCP_URL",
-    "http://127.0.0.1:8000/mcp"
-)
-
-MCP_TOKEN = os.environ.get(
-    "MISSMINUTES_MCP_TOKEN",
-    ""
-)
+MCP_URL = os.environ.get("MISSMINUTES_MCP_URL", "http://127.0.0.1:8000/mcp")
+MCP_TOKEN = os.environ.get("MISSMINUTES_MCP_TOKEN", "")
 
 
 async def main():
 
     if not MCP_TOKEN:
-
         raise SystemExit(
-            "Set MISSMINUTES_MCP_TOKEN to the same shared secret the "
-            "server was started with before running this test client."
+            "MISSMINUTES_MCP_TOKEN is not set. Set it to the same value "
+            "the server is running with before running this test."
         )
 
-    http_client = httpx2.AsyncClient(
-        headers={
-            "Authorization": f"Bearer {MCP_TOKEN}"
-        }
-    )
+    headers = {"Authorization": f"Bearer {MCP_TOKEN}"}
 
-    transport = streamable_http_client(
+    # streamablehttp_client is an async context manager that yields a
+    # (read_stream, write_stream, get_session_id_callback) tuple - it
+    # is not a plain object you hand to a "Client" constructor (there
+    # is no mcp.Client class). The headers go straight to the
+    # transport itself rather than a separate httpx.AsyncClient.
+    async with streamablehttp_client(
         MCP_URL,
-        http_client=http_client
-    )
+        headers=headers,
+    ) as (read_stream, write_stream, get_session_id):
 
-    async with Client(transport) as client:
-        text = "Well hey there, sugar."
-        emotion = "happy"
+        async with ClientSession(read_stream, write_stream) as session:
 
-        print("\nSending text to Miss Minutes...")
-        print(text)
+            await session.initialize()
 
-        result = await client.call_tool(
-            "receive_text",
-            {"text": text, "emotion": emotion}
-        )
+            text = "Well hey there, sugar."
+            emotion = "happy"
 
-        print("\nResult:")
-        print(result)
+            result = await session.call_tool(
+                "receive_text",
+                {"text": text, "emotion": emotion},
+            )
+
+            print(result)
 
 
 if __name__ == "__main__":
