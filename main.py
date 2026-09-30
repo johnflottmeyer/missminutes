@@ -5,6 +5,7 @@ import json
 import time
 import fcntl
 import queue
+import tempfile
 import threading
 import subprocess
 from datetime import datetime
@@ -51,6 +52,20 @@ SPEECH_LOG_FILE = os.path.join(
 )
 
 ESPEAK_SPEED = 160
+
+# Which TTS engine generates the WAV that gets analyzed for lip-sync
+# and played through aplay. Both are fast/local, no network or heavy
+# model involved, so neither should reintroduce the delay that made
+# Piper unusable.
+#   "espeak-ng" - what's been running; clearly robotic but instant.
+#   "pico2wave" - SVOX Pico, still lightweight, noticeably less
+#                 robotic prosody. Requires the libttspico-utils
+#                 package (apt) on the Pi - not installed by default.
+# Flip this one line to A/B them; everything else (queueing,
+# analysis, playback, lip-sync) is unchanged either way.
+TTS_ENGINE = "espeak-ng"
+
+PICO2WAVE_LANGUAGE = "en-US"
 
 SPEECH_CHECK_INTERVAL = 0.10
 
@@ -221,6 +236,80 @@ def log_speech(event, text):
 
 
 # ==========================
+# TTS SYNTHESIS
+# ==========================
+
+def _synthesize_espeak_ng(text):
+
+    result = subprocess.run(
+        [
+            "espeak-ng",
+            "-s",
+            str(ESPEAK_SPEED),
+            "--stdout",
+            text
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL
+    )
+
+    return result.stdout
+
+
+def _synthesize_pico2wave(text):
+
+    # pico2wave has no --stdout option - it only writes a WAV to a
+    # file path, so we hand it a temp file and read the bytes back.
+    # Runs in the same worker thread as espeak-ng did, so this stays
+    # off the main/render thread either way.
+    with tempfile.NamedTemporaryFile(
+        suffix=".wav",
+        delete=False
+    ) as temp_file:
+
+        temp_path = temp_file.name
+
+    try:
+
+        subprocess.run(
+            [
+                "pico2wave",
+                "-l",
+                PICO2WAVE_LANGUAGE,
+                "-w",
+                temp_path,
+                text
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True
+        )
+
+        with open(temp_path, "rb") as wav_file:
+            return wav_file.read()
+
+    finally:
+
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
+def synthesize_wav(text):
+    """
+    Generate a WAV for `text` using whichever engine TTS_ENGINE
+    selects. Returns raw WAV bytes, or raises on failure (callers
+    already wrap this in a try/except).
+    """
+
+    if TTS_ENGINE == "pico2wave":
+        return _synthesize_pico2wave(text)
+
+    return _synthesize_espeak_ng(text)
+
+
+# ==========================
 # AUDIO WORKER
 # ==========================
 
@@ -271,25 +360,13 @@ def audio_worker():
             # Generate the full WAV in memory first (instead of
             # streaming straight into aplay) so its real duration
             # and loudness can be measured before/while it plays.
-            # espeak-ng is not a neural model - generating a
-            # sentence takes a few milliseconds even on a Pi 3B, so
-            # this doesn't reintroduce the kind of delay a heavier
-            # TTS engine caused.
+            # Both supported engines are lightweight, non-neural
+            # synthesizers - generating a sentence takes at most a
+            # few tens of milliseconds even on a Pi 3B, so this
+            # doesn't reintroduce the kind of delay Piper caused.
             # ----------------------------------
 
-            espeak_result = subprocess.run(
-                [
-                    "espeak-ng",
-                    "-s",
-                    str(ESPEAK_SPEED),
-                    "--stdout",
-                    text
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL
-            )
-
-            wav_bytes = espeak_result.stdout
+            wav_bytes = synthesize_wav(text)
 
 
             duration, envelope, envelope_window = analyze_wav(
