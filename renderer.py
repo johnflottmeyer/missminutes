@@ -757,6 +757,96 @@ def draw_mouth(
 
 
 # ==========================
+# LIMBS
+# ==========================
+
+LIMB_ORANGE = FACE_ORANGE
+LIMB_EDGE = FACE_EDGE
+GLOVE_WHITE = (255, 245, 220)
+SHOE_DARK = (91, 45, 27)
+
+
+def _joint_point(start, length, angle_degrees):
+    """Return endpoint for an angle measured clockwise from down."""
+    angle = math.radians(angle_degrees)
+    return (
+        start[0] + math.sin(angle) * length,
+        start[1] + math.cos(angle) * length
+    )
+
+
+def _draw_segment(surface, start, end, width):
+    a = (int(start[0]), int(start[1]))
+    b = (int(end[0]), int(end[1]))
+    pygame.draw.line(surface, LIMB_EDGE, a, b, width + 5)
+    pygame.draw.line(surface, LIMB_ORANGE, a, b, width)
+    pygame.draw.circle(surface, LIMB_ORANGE, a, width // 2)
+    pygame.draw.circle(surface, LIMB_ORANGE, b, width // 2)
+
+
+def draw_arm(surface, shoulder, upper_angle, lower_angle, side):
+    upper_len = 57
+    lower_len = 52
+
+    elbow = _joint_point(shoulder, upper_len, upper_angle)
+    # Lower angle is relative to the upper arm, like an elbow joint.
+    hand = _joint_point(elbow, lower_len, upper_angle + lower_angle)
+
+    _draw_segment(surface, shoulder, elbow, 15)
+    _draw_segment(surface, elbow, hand, 13)
+
+    hx, hy = int(hand[0]), int(hand[1])
+    # Cuff hides the arm-to-glove transition.
+    pygame.draw.ellipse(surface, GLOVE_WHITE, (hx - 10, hy - 7, 20, 17))
+    # Simple vintage-cartoon mitten; fingers can be refined after scale is approved.
+    pygame.draw.circle(surface, GLOVE_WHITE, (hx, hy + 9), 13)
+    thumb_x = hx + (10 if side == "left" else -10)
+    pygame.draw.circle(surface, GLOVE_WHITE, (thumb_x, hy + 7), 6)
+    pygame.draw.arc(surface, LIMB_EDGE, (hx - 8, hy + 4, 16, 12), 0, math.pi, 2)
+
+
+def draw_leg(surface, hip, upper_angle, lower_angle, side):
+    upper_len = 53
+    lower_len = 48
+
+    knee = _joint_point(hip, upper_len, upper_angle)
+    ankle = _joint_point(knee, lower_len, upper_angle + lower_angle)
+
+    _draw_segment(surface, hip, knee, 16)
+    _draw_segment(surface, knee, ankle, 14)
+
+    ax, ay = int(ankle[0]), int(ankle[1])
+    direction = -1 if side == "left" else 1
+    # Rounded, slightly outward-pointing shoe.
+    shoe = pygame.Rect(ax - 12, ay - 2, 29, 16)
+    shoe.x += direction * 4
+    pygame.draw.ellipse(surface, SHOE_DARK, shoe)
+    toe = (ax + direction * 13, ay + 7)
+    pygame.draw.circle(surface, SHOE_DARK, toe, 8)
+
+
+def draw_limbs(surface, state, cx, cy):
+    # Attachment points intentionally sit beneath the clock so the body masks
+    # the joints, just as the HTML/CSS version did visually.
+    draw_leg(
+        surface, (cx - 43, cy + 82),
+        state.left_upper_leg, state.left_lower_leg, "left"
+    )
+    draw_leg(
+        surface, (cx + 43, cy + 82),
+        state.right_upper_leg, state.right_lower_leg, "right"
+    )
+    draw_arm(
+        surface, (cx - 91, cy + 4),
+        state.left_upper_arm, state.left_lower_arm, "left"
+    )
+    draw_arm(
+        surface, (cx + 91, cy + 4),
+        state.right_upper_arm, state.right_lower_arm, "right"
+    )
+
+
+# ==========================
 # CHARACTER
 # ==========================
 
@@ -771,6 +861,15 @@ def draw_character(
 
     cy = int(
         state.y
+    )
+
+
+    # Limbs first so their attachment points disappear behind the clock.
+    draw_limbs(
+        surface,
+        state,
+        cx,
+        cy
     )
 
 
