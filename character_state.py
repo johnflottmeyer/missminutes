@@ -1,981 +1,334 @@
 import math
-import pygame
 
 
 # ==========================
-# COLORS
+# SMOOTHING RATES
 # ==========================
+# Higher = closes the gap to target faster. These are tuned by feel,
+# not derived from anything physical - adjust freely.
+#
+# Modeled as an exponential approach: after 1/rate seconds the
+# displayed value has closed about 63% of the remaining distance to
+# its target, regardless of frame rate (unlike a fixed per-frame
+# step, which speeds up or slows down if FPS changes).
 
-BLACK = (0, 0, 0)
+MOUTH_ATTACK_RATE = 34.0     # mouth opening - fast, a mouth opens quickly
+MOUTH_RELEASE_RATE = 20.0    # mouth closing - a touch slower, softer
 
-FACE_ORANGE = (244, 151, 28)
-FACE_EDGE = (184, 72, 24)
+EYE_RATE = 26.0              # eyelid scale - covers both blinks and
+                              # expression changes with one rate
 
-EYE_WHITE = (255, 247, 218)
-EYE_OUTLINE = (163, 67, 28)
-
-PUPIL_DARK = (67, 39, 25)
-PUPIL_ORANGE = (205, 82, 24)
-
-MOUTH_COLOR = (120, 48, 25)
-
-TEETH_COLOR = (255, 244, 220)
-TONGUE_COLOR = (188, 73, 52)
-
-
-# ==========================
-# HEAD
-# ==========================
-
-HEAD_RADIUS = 110
+POSE_PUPIL_RATE = 12.0       # pupil offset from the current emotion
+IDLE_PUPIL_RATE = 10.0       # pupil offset from idle wandering
+LIMB_RATE = 8.0               # arms/legs ease between poses
 
 
-def draw_head(surface, cx, cy):
+def _approach(current, target, rate, dt):
 
-    pygame.draw.circle(
-        surface,
-        FACE_EDGE,
-        (cx, cy),
-        HEAD_RADIUS + 4
-    )
+    if rate <= 0:
+        return target
 
-    pygame.draw.circle(
-        surface,
-        FACE_ORANGE,
-        (cx, cy),
-        HEAD_RADIUS
-    )
+    blend = 1.0 - math.exp(-rate * dt)
+
+    return current + (target - current) * blend
 
 
-# ==========================
-# CLOCK MARKINGS
-# ==========================
+class CharacterState:
 
-def draw_clock_marks(surface, cx, cy):
+    def __init__(self):
 
-    mark_color = FACE_EDGE
+        # ==========================
+        # POSITION
+        # ==========================
 
-    for hour in range(12):
+        self.x = 157
+        self.y = 250
 
-        angle = math.radians(
-            hour * 30 - 90
-        )
 
-        if hour % 3 == 0:
+        # ==========================
+        # FACE / MOUTH
+        # ==========================
+        # mouth_shape switches instantly - it's one of a handful of
+        # drawn shapes, not something that benefits from blending
+        # into a shape it isn't. mouth_open eases toward
+        # target_mouth_open every frame instead, which is what
+        # actually reads as a moving mouth rather than a slideshow.
 
-            outer_r = 94
-            inner_r = 80
-            width = 6
+        self.mouth_shape = "REST"
 
+        self.mouth_open = 0.0
+        self.target_mouth_open = 0.0
+
+
+        # ==========================
+        # EYES - RESTING SHAPE (FROM POSE)
+        # ==========================
+        # pose_*_eye_target holds the current emotion's resting
+        # eyelid scale. It's written only by poses.set_pose() and
+        # only ever read elsewhere, so it always reflects "what this
+        # emotion looks like when not blinking", even if something
+        # asks mid-blink.
+
+        self.pose_left_eye_target = 1.0
+        self.pose_right_eye_target = 1.0
+
+
+        # ==========================
+        # EYES - DISPLAYED SCALE
+        # ==========================
+        # target_left/right_eye_scale_y is recomputed every frame by
+        # IdleAnimator: the blink-closed value while a blink is in
+        # progress, otherwise pose_*_eye_target. left/right_eye_scale_y
+        # is the smoothed result renderer.py actually draws.
+
+        self.target_left_eye_scale_y = 1.0
+        self.target_right_eye_scale_y = 1.0
+
+        self.left_eye_scale_y = 1.0
+        self.right_eye_scale_y = 1.0
+
+
+        # ==========================
+        # PUPILS - TWO INDEPENDENT SOURCES
+        # ==========================
+        # Final pupil position is the current emotion's own offset
+        # plus a separate idle "wander" offset, added together each
+        # frame. Previously idle's look-around code overwrote the
+        # pose's pupil offset outright, so e.g. "sad" eyes would pop
+        # back to a neutral look every time idle glanced around or
+        # recentered. Keeping the two sources separate means idle
+        # wandering rides on top of whatever the current emotion
+        # already looks like, instead of replacing it.
+
+        self.target_pose_left_pupil_x = 0.0
+        self.target_pose_left_pupil_y = 0.0
+
+        self.target_pose_right_pupil_x = 0.0
+        self.target_pose_right_pupil_y = 0.0
+
+        self.pose_left_pupil_x = 0.0
+        self.pose_left_pupil_y = 0.0
+
+        self.pose_right_pupil_x = 0.0
+        self.pose_right_pupil_y = 0.0
+
+        self.target_idle_left_pupil_x = 0.0
+        self.target_idle_left_pupil_y = 0.0
+
+        self.target_idle_right_pupil_x = 0.0
+        self.target_idle_right_pupil_y = 0.0
+
+        self.idle_left_pupil_x = 0.0
+        self.idle_left_pupil_y = 0.0
+
+        self.idle_right_pupil_x = 0.0
+        self.idle_right_pupil_y = 0.0
+
+
+        # ==========================
+        # PUPILS - DISPLAYED (pose + idle)
+        # ==========================
+        # renderer.py only ever reads these four fields - it has no
+        # idea pupil position is a blend of two sources underneath.
+
+        self.left_pupil_x = 0.0
+        self.left_pupil_y = 0.0
+
+        self.right_pupil_x = 0.0
+        self.right_pupil_y = 0.0
+
+
+        # ==========================
+        # CURRENT EXPRESSION
+        # ==========================
+
+        self.pose = "neutral"
+
+
+        # ==========================
+        # LIMBS
+        # ==========================
+        # Angles are degrees, measured clockwise from straight down.
+        # Each segment has a displayed value and a target so future
+        # emotional/body poses can move without snapping.
+
+        self.left_upper_arm = -18.0
+        self.left_lower_arm = -10.0
+        self.right_upper_arm = 18.0
+        self.right_lower_arm = 10.0
+
+        self.left_upper_leg = -8.0
+        self.left_lower_leg = 3.0
+        self.right_upper_leg = 8.0
+        self.right_lower_leg = -3.0
+
+        self.target_left_upper_arm = self.left_upper_arm
+        self.target_left_lower_arm = self.left_lower_arm
+        self.target_right_upper_arm = self.right_upper_arm
+        self.target_right_lower_arm = self.right_lower_arm
+
+        self.target_left_upper_leg = self.left_upper_leg
+        self.target_left_lower_leg = self.left_lower_leg
+        self.target_right_upper_leg = self.right_upper_leg
+        self.target_right_lower_leg = self.right_lower_leg
+
+
+    # ==========================
+    # SMOOTHING
+    # ==========================
+
+    def update_smoothing(self, dt):
+        """
+        Eases every displayed value toward its current target and
+        recomputes the pupil blend. Call this once per frame, after
+        idle/poses/speech have updated their targets for the frame,
+        and before drawing.
+        """
+
+        # ----------------------------------
+        # Mouth (asymmetric attack/release)
+        # ----------------------------------
+
+        if self.target_mouth_open > self.mouth_open:
+            mouth_rate = MOUTH_ATTACK_RATE
         else:
+            mouth_rate = MOUTH_RELEASE_RATE
 
-            outer_r = 92
-            inner_r = 84
-            width = 4
-
-
-        x1 = (
-            cx
-            + math.cos(angle)
-            * inner_r
-        )
-
-        y1 = (
-            cy
-            + math.sin(angle)
-            * inner_r
-        )
-
-        x2 = (
-            cx
-            + math.cos(angle)
-            * outer_r
-        )
-
-        y2 = (
-            cy
-            + math.sin(angle)
-            * outer_r
+        self.mouth_open = _approach(
+            self.mouth_open,
+            self.target_mouth_open,
+            mouth_rate,
+            dt
         )
 
 
-        pygame.draw.line(
-            surface,
-            mark_color,
-            (
-                int(x1),
-                int(y1)
-            ),
-            (
-                int(x2),
-                int(y2)
-            ),
-            width
+        # ----------------------------------
+        # Eyes
+        # ----------------------------------
+
+        self.left_eye_scale_y = _approach(
+            self.left_eye_scale_y,
+            self.target_left_eye_scale_y,
+            EYE_RATE,
+            dt
+        )
+
+        self.right_eye_scale_y = _approach(
+            self.right_eye_scale_y,
+            self.target_right_eye_scale_y,
+            EYE_RATE,
+            dt
         )
 
 
-# ==========================
-# EYE
-# ==========================
+        # ----------------------------------
+        # Pupils - pose baseline
+        # ----------------------------------
 
-def draw_eye(
-    surface,
-    x,
-    y,
-    width,
-    height,
-    lash_side="left"
-):
-
-    points = [
-
-        (
-            x,
-            y - height * 0.50
-        ),
-
-        (
-            x - width * 0.28,
-            y - height * 0.43
-        ),
-
-        (
-            x - width * 0.46,
-            y - height * 0.18
-        ),
-
-        (
-            x - width * 0.50,
-            y + height * 0.10
-        ),
-
-        (
-            x - width * 0.42,
-            y + height * 0.34
-        ),
-
-        (
-            x - width * 0.22,
-            y + height * 0.48
-        ),
-
-        (
-            x,
-            y + height * 0.52
-        ),
-
-        (
-            x + width * 0.24,
-            y + height * 0.47
-        ),
-
-        (
-            x + width * 0.43,
-            y + height * 0.30
-        ),
-
-        (
-            x + width * 0.48,
-            y + height * 0.04
-        ),
-
-        (
-            x + width * 0.38,
-            y - height * 0.25
-        ),
-
-        (
-            x + width * 0.20,
-            y - height * 0.44
-        )
-    ]
-
-
-    points = [
-
-        (
-            int(px),
-            int(py)
+        self.pose_left_pupil_x = _approach(
+            self.pose_left_pupil_x,
+            self.target_pose_left_pupil_x,
+            POSE_PUPIL_RATE,
+            dt
         )
 
-        for px, py in points
-    ]
+        self.pose_left_pupil_y = _approach(
+            self.pose_left_pupil_y,
+            self.target_pose_left_pupil_y,
+            POSE_PUPIL_RATE,
+            dt
+        )
+
+        self.pose_right_pupil_x = _approach(
+            self.pose_right_pupil_x,
+            self.target_pose_right_pupil_x,
+            POSE_PUPIL_RATE,
+            dt
+        )
+
+        self.pose_right_pupil_y = _approach(
+            self.pose_right_pupil_y,
+            self.target_pose_right_pupil_y,
+            POSE_PUPIL_RATE,
+            dt
+        )
 
 
-    pygame.draw.polygon(
-        surface,
-        EYE_OUTLINE,
-        points
-    )
+        # ----------------------------------
+        # Pupils - idle wander
+        # ----------------------------------
+
+        self.idle_left_pupil_x = _approach(
+            self.idle_left_pupil_x,
+            self.target_idle_left_pupil_x,
+            IDLE_PUPIL_RATE,
+            dt
+        )
+
+        self.idle_left_pupil_y = _approach(
+            self.idle_left_pupil_y,
+            self.target_idle_left_pupil_y,
+            IDLE_PUPIL_RATE,
+            dt
+        )
+
+        self.idle_right_pupil_x = _approach(
+            self.idle_right_pupil_x,
+            self.target_idle_right_pupil_x,
+            IDLE_PUPIL_RATE,
+            dt
+        )
+
+        self.idle_right_pupil_y = _approach(
+            self.idle_right_pupil_y,
+            self.target_idle_right_pupil_y,
+            IDLE_PUPIL_RATE,
+            dt
+        )
 
 
-    inner = []
+        # ----------------------------------
+        # Limbs
+        # ----------------------------------
 
-
-    for px, py in points:
-
-        dx = px - x
-        dy = py - y
-
-        inner.append(
-            (
-                int(
-                    x + dx * 0.88
-                ),
-
-                int(
-                    y + dy * 0.90
+        for name in (
+            "left_upper_arm", "left_lower_arm",
+            "right_upper_arm", "right_lower_arm",
+            "left_upper_leg", "left_lower_leg",
+            "right_upper_leg", "right_lower_leg"
+        ):
+            setattr(
+                self,
+                name,
+                _approach(
+                    getattr(self, name),
+                    getattr(self, "target_" + name),
+                    LIMB_RATE,
+                    dt
                 )
             )
+
+
+        # ----------------------------------
+        # Pupils - final blend (what renderer.py reads)
+        # ----------------------------------
+
+        self.left_pupil_x = (
+            self.pose_left_pupil_x
+            + self.idle_left_pupil_x
         )
 
-
-    pygame.draw.polygon(
-        surface,
-        EYE_WHITE,
-        inner
-    )
-
-
-    lash_y = int(
-        y - height * 0.42
-    )
-
-
-    if lash_side == "left":
-
-        pygame.draw.line(
-            surface,
-            EYE_OUTLINE,
-            (
-                int(
-                    x - width * 0.28
-                ),
-                lash_y
-            ),
-            (
-                int(
-                    x - width * 0.43
-                ),
-                lash_y - 9
-            ),
-            3
+        self.left_pupil_y = (
+            self.pose_left_pupil_y
+            + self.idle_left_pupil_y
         )
 
-        pygame.draw.line(
-            surface,
-            EYE_OUTLINE,
-            (
-                int(
-                    x - width * 0.13
-                ),
-                lash_y - 3
-            ),
-            (
-                int(
-                    x - width * 0.18
-                ),
-                lash_y - 13
-            ),
-            3
+        self.right_pupil_x = (
+            self.pose_right_pupil_x
+            + self.idle_right_pupil_x
         )
 
-        pygame.draw.line(
-            surface,
-            EYE_OUTLINE,
-            (
-                int(
-                    x + width * 0.03
-                ),
-                lash_y - 4
-            ),
-            (
-                int(
-                    x + width * 0.05
-                ),
-                lash_y - 14
-            ),
-            3
+        self.right_pupil_y = (
+            self.pose_right_pupil_y
+            + self.idle_right_pupil_y
         )
-
-    else:
-
-        pygame.draw.line(
-            surface,
-            EYE_OUTLINE,
-            (
-                int(
-                    x + width * 0.28
-                ),
-                lash_y
-            ),
-            (
-                int(
-                    x + width * 0.43
-                ),
-                lash_y - 9
-            ),
-            3
-        )
-
-        pygame.draw.line(
-            surface,
-            EYE_OUTLINE,
-            (
-                int(
-                    x + width * 0.13
-                ),
-                lash_y - 3
-            ),
-            (
-                int(
-                    x + width * 0.18
-                ),
-                lash_y - 13
-            ),
-            3
-        )
-
-        pygame.draw.line(
-            surface,
-            EYE_OUTLINE,
-            (
-                int(
-                    x - width * 0.03
-                ),
-                lash_y - 4
-            ),
-            (
-                int(
-                    x - width * 0.05
-                ),
-                lash_y - 14
-            ),
-            3
-        )
-
-
-# ==========================
-# PUPIL
-# ==========================
-
-def draw_pupil(
-    surface,
-    x,
-    y
-):
-
-    pupil_width = 19
-    pupil_height = 37
-
-
-    pygame.draw.ellipse(
-        surface,
-        PUPIL_DARK,
-        (
-            int(
-                x - pupil_width / 2
-            ),
-
-            int(
-                y - pupil_height / 2
-            ),
-
-            pupil_width,
-            pupil_height
-        )
-    )
-
-
-    pygame.draw.ellipse(
-        surface,
-        PUPIL_ORANGE,
-        (
-            int(x - 7),
-            int(y + 5),
-            14,
-            10
-        )
-    )
-
-
-    wedge = [
-
-        (
-            int(x + 9),
-            int(y - 11)
-        ),
-
-        (
-            int(x - 1),
-            int(y - 5)
-        ),
-
-        (
-            int(x + 9),
-            int(y - 1)
-        )
-    ]
-
-
-    pygame.draw.polygon(
-        surface,
-        EYE_WHITE,
-        wedge
-    )
-
-
-# ==========================
-# NOSE
-# ==========================
-
-def draw_nose(
-    surface,
-    cx,
-    cy
-):
-
-    pygame.draw.circle(
-        surface,
-        FACE_EDGE,
-        (
-            cx,
-            cy
-        ),
-        6
-    )
-
-
-# ==========================
-# REST MOUTH
-# ==========================
-
-def draw_rest_mouth(
-    surface,
-    cx,
-    cy
-):
-
-    points = [
-
-        (
-            cx - 29,
-            cy + 26
-        ),
-
-        (
-            cx - 20,
-            cy + 28
-        ),
-
-        (
-            cx - 10,
-            cy + 29
-        ),
-
-        (
-            cx,
-            cy + 30
-        ),
-
-        (
-            cx + 10,
-            cy + 29
-        ),
-
-        (
-            cx + 20,
-            cy + 26
-        ),
-
-        (
-            cx + 27,
-            cy + 22
-        )
-    ]
-
-
-    pygame.draw.lines(
-        surface,
-        MOUTH_COLOR,
-        False,
-        points,
-        4
-    )
-
-
-# ==========================
-# MOUTH SHAPES
-# ==========================
-
-def draw_mouth(
-    surface,
-    cx,
-    cy,
-    shape,
-    openness
-):
-
-    openness = max(
-        0.0,
-        min(
-            1.0,
-            openness
-        )
-    )
-
-
-    # ==========================
-    # REST
-    # ==========================
-
-    if shape == "REST":
-
-        draw_rest_mouth(
-            surface,
-            cx,
-            cy
-        )
-
-        return
-
-
-    # ==========================
-    # MBP
-    # CLOSED LIPS
-    # ==========================
-
-    if shape == "MBP":
-
-        pygame.draw.line(
-            surface,
-            MOUTH_COLOR,
-            (
-                cx - 22,
-                cy + 28
-            ),
-            (
-                cx + 22,
-                cy + 28
-            ),
-            4
-        )
-
-        return
-
-
-    # ==========================
-    # EE
-    # WIDE + THIN
-    # ==========================
-
-    if shape == "EE":
-
-        mouth_width = 56
-
-        mouth_height = max(
-            5,
-            int(
-                8
-                + openness * 12
-            )
-        )
-
-
-        pygame.draw.ellipse(
-            surface,
-            MOUTH_COLOR,
-            (
-                cx - mouth_width // 2,
-                cy + 23,
-                mouth_width,
-                mouth_height
-            )
-        )
-
-
-        teeth_height = max(
-            2,
-            mouth_height // 3
-        )
-
-
-        pygame.draw.rect(
-            surface,
-            TEETH_COLOR,
-            (
-                cx - 20,
-                cy + 24,
-                40,
-                teeth_height
-            )
-        )
-
-        return
-
-
-    # ==========================
-    # AA
-    # WIDE + OPEN
-    # ==========================
-
-    if shape == "AA":
-
-        mouth_width = 48
-
-        mouth_height = max(
-            10,
-            int(
-                10
-                + openness * 30
-            )
-        )
-
-
-        pygame.draw.ellipse(
-            surface,
-            MOUTH_COLOR,
-            (
-                cx - mouth_width // 2,
-                int(
-                    cy + 28
-                    - mouth_height / 2
-                ),
-                mouth_width,
-                mouth_height
-            )
-        )
-
-
-        tongue_height = max(
-            3,
-            mouth_height // 4
-        )
-
-
-        pygame.draw.ellipse(
-            surface,
-            TONGUE_COLOR,
-            (
-                cx - 13,
-                int(
-                    cy + 29
-                    + mouth_height * 0.12
-                ),
-                26,
-                tongue_height
-            )
-        )
-
-        return
-
-
-    # ==========================
-    # OH
-    # ROUND
-    # ==========================
-
-    if shape == "OH":
-
-        mouth_width = max(
-            18,
-            int(
-                20
-                + openness * 16
-            )
-        )
-
-        mouth_height = max(
-            14,
-            int(
-                16
-                + openness * 25
-            )
-        )
-
-
-        pygame.draw.ellipse(
-            surface,
-            MOUTH_COLOR,
-            (
-                cx - mouth_width // 2,
-                int(
-                    cy + 28
-                    - mouth_height / 2
-                ),
-                mouth_width,
-                mouth_height
-            )
-        )
-
-        return
-
-
-    # ==========================
-    # FV
-    # TEETH AGAINST LOWER LIP
-    # ==========================
-
-    if shape == "FV":
-
-        mouth_width = 46
-        mouth_height = 12
-
-
-        pygame.draw.ellipse(
-            surface,
-            MOUTH_COLOR,
-            (
-                cx - mouth_width // 2,
-                cy + 23,
-                mouth_width,
-                mouth_height
-            )
-        )
-
-
-        pygame.draw.rect(
-            surface,
-            TEETH_COLOR,
-            (
-                cx - 18,
-                cy + 23,
-                36,
-                4
-            )
-        )
-
-        return
-
-
-    # Fallback
-    draw_rest_mouth(
-        surface,
-        cx,
-        cy
-    )
-
-
-# ==========================
-# LIMBS
-# ==========================
-
-LIMB_ORANGE = FACE_ORANGE
-LIMB_EDGE = FACE_EDGE
-GLOVE_WHITE = (255, 245, 220)
-SHOE_DARK = (91, 45, 27)
-
-
-def _joint_point(start, length, angle_degrees):
-    """Return endpoint for an angle measured clockwise from down."""
-    angle = math.radians(angle_degrees)
-    return (
-        start[0] + math.sin(angle) * length,
-        start[1] + math.cos(angle) * length
-    )
-
-
-def _draw_segment(surface, start, end, width):
-    a = (int(start[0]), int(start[1]))
-    b = (int(end[0]), int(end[1]))
-    pygame.draw.line(surface, LIMB_EDGE, a, b, width + 5)
-    pygame.draw.line(surface, LIMB_ORANGE, a, b, width)
-    pygame.draw.circle(surface, LIMB_ORANGE, a, width // 2)
-    pygame.draw.circle(surface, LIMB_ORANGE, b, width // 2)
-
-
-def draw_arm(surface, shoulder, upper_angle, lower_angle, side):
-    upper_len = 57
-    lower_len = 52
-
-    elbow = _joint_point(shoulder, upper_len, upper_angle)
-    # Lower angle is relative to the upper arm, like an elbow joint.
-    hand = _joint_point(elbow, lower_len, upper_angle + lower_angle)
-
-    _draw_segment(surface, shoulder, elbow, 15)
-    _draw_segment(surface, elbow, hand, 13)
-
-    hx, hy = int(hand[0]), int(hand[1])
-    # Cuff hides the arm-to-glove transition.
-    pygame.draw.ellipse(surface, GLOVE_WHITE, (hx - 10, hy - 7, 20, 17))
-    # Simple vintage-cartoon mitten; fingers can be refined after scale is approved.
-    pygame.draw.circle(surface, GLOVE_WHITE, (hx, hy + 9), 13)
-    thumb_x = hx + (10 if side == "left" else -10)
-    pygame.draw.circle(surface, GLOVE_WHITE, (thumb_x, hy + 7), 6)
-    pygame.draw.arc(surface, LIMB_EDGE, (hx - 8, hy + 4, 16, 12), 0, math.pi, 2)
-
-
-def draw_leg(surface, hip, upper_angle, lower_angle, side):
-    upper_len = 53
-    lower_len = 48
-
-    knee = _joint_point(hip, upper_len, upper_angle)
-    ankle = _joint_point(knee, lower_len, upper_angle + lower_angle)
-
-    _draw_segment(surface, hip, knee, 16)
-    _draw_segment(surface, knee, ankle, 14)
-
-    ax, ay = int(ankle[0]), int(ankle[1])
-    direction = -1 if side == "left" else 1
-    # Rounded, slightly outward-pointing shoe.
-    shoe = pygame.Rect(ax - 12, ay - 2, 29, 16)
-    shoe.x += direction * 4
-    pygame.draw.ellipse(surface, SHOE_DARK, shoe)
-    toe = (ax + direction * 13, ay + 7)
-    pygame.draw.circle(surface, SHOE_DARK, toe, 8)
-
-
-def draw_limbs(surface, state, cx, cy):
-    # Attachment points intentionally sit beneath the clock so the body masks
-    # the joints, just as the HTML/CSS version did visually.
-    draw_leg(
-        surface, (cx - 43, cy + 82),
-        state.left_upper_leg, state.left_lower_leg, "left"
-    )
-    draw_leg(
-        surface, (cx + 43, cy + 82),
-        state.right_upper_leg, state.right_lower_leg, "right"
-    )
-    draw_arm(
-        surface, (cx - 91, cy + 4),
-        state.left_upper_arm, state.left_lower_arm, "left"
-    )
-    draw_arm(
-        surface, (cx + 91, cy + 4),
-        state.right_upper_arm, state.right_lower_arm, "right"
-    )
-
-
-# ==========================
-# CHARACTER
-# ==========================
-
-def draw_character(
-    surface,
-    state
-):
-
-    cx = int(
-        state.x
-    )
-
-    cy = int(
-        state.y
-    )
-
-
-    # Limbs first so their attachment points disappear behind the clock.
-    draw_limbs(
-        surface,
-        state,
-        cx,
-        cy
-    )
-
-
-    draw_head(
-        surface,
-        cx,
-        cy
-    )
-
-
-    draw_clock_marks(
-        surface,
-        cx,
-        cy
-    )
-
-
-    LEFT_EYE_X = (
-        cx - 30
-    )
-
-    RIGHT_EYE_X = (
-        cx + 30
-    )
-
-    EYE_Y = (
-        cy - 22
-    )
-
-    EYE_WIDTH = 43
-    EYE_HEIGHT = 60
-
-
-    draw_eye(
-        surface,
-        LEFT_EYE_X,
-        EYE_Y,
-        EYE_WIDTH,
-        int(
-            EYE_HEIGHT
-            * state.left_eye_scale_y
-        ),
-        "left"
-    )
-
-
-    draw_eye(
-        surface,
-        RIGHT_EYE_X,
-        EYE_Y,
-        EYE_WIDTH,
-        int(
-            EYE_HEIGHT
-            * state.right_eye_scale_y
-        ),
-        "right"
-    )
-
-
-    # ==========================
-    # PUPILS
-    # ==========================
-
-    if (
-        state.left_eye_scale_y
-        > 0.15
-    ):
-
-        draw_pupil(
-            surface,
-            LEFT_EYE_X
-            + state.left_pupil_x,
-            EYE_Y
-            + state.left_pupil_y
-        )
-
-
-    if (
-        state.right_eye_scale_y
-        > 0.15
-    ):
-
-        draw_pupil(
-            surface,
-            RIGHT_EYE_X
-            + state.right_pupil_x,
-            EYE_Y
-            + state.right_pupil_y
-        )
-
-
-    draw_nose(
-        surface,
-        cx,
-        cy + 4
-    )
-
-
-    # ==========================
-    # MOUTH
-    # ==========================
-
-    draw_mouth(
-        surface,
-        cx,
-        cy,
-        state.mouth_shape,
-        state.mouth_open
-    )
