@@ -12,6 +12,17 @@ import time
 # if it looks like it's leading too much.
 AUDIO_LOOKAHEAD = 0.06
 
+# Shortest time (seconds) any one mouth shape stays on screen.
+# The letter-by-letter tokenizer produces shapes as short as
+# ~35 ms (a single space between words), which at 30 FPS is about
+# one frame - the mouth was flickering between shapes faster than
+# the eye can follow, which reads as jittery rather than as speech.
+# Segments shorter than this are merged into their neighbor, so
+# quick consonants and word gaps become a small dip in openness
+# instead of a snap shut. Raise for a smoother/lazier mouth, lower
+# for a more articulate/busier one. 0 disables merging.
+MIN_SHAPE_HOLD = 0.09
+
 
 # ==========================
 # TEXT -> MOUTH SHAPE TOKENS
@@ -190,6 +201,57 @@ def _resolve_holds(tokens):
     return resolved
 
 
+def _merge_short_segments(tokens, min_hold):
+    """
+    Merges (shape, openness, duration) tokens so that none (except
+    possibly the very last) is shorter than min_hold seconds.
+
+    When two tokens merge, the merged token keeps the shape of
+    whichever one lasted longer (the more visible of the two), and
+    its openness becomes their duration-weighted average - so a
+    35 ms word gap between two open vowels becomes a slight dip in
+    openness rather than the mouth slamming shut for one frame.
+
+    Durations here must already be in the units min_hold uses
+    (real seconds in audio-driven mode, fallback timer seconds
+    otherwise).
+    """
+
+    if min_hold <= 0 or not tokens:
+        return list(tokens)
+
+    merged = []
+
+    cur_shape, cur_open, cur_dur = tokens[0]
+
+    for shape, openness, duration in tokens[1:]:
+
+        if cur_dur < min_hold:
+
+            total = cur_dur + duration
+
+            if total > 0:
+                cur_open = (
+                    cur_open * cur_dur
+                    + openness * duration
+                ) / total
+
+            if duration > cur_dur:
+                cur_shape = shape
+
+            cur_dur = total
+
+        else:
+
+            merged.append((cur_shape, cur_open, cur_dur))
+
+            cur_shape, cur_open, cur_dur = shape, openness, duration
+
+    merged.append((cur_shape, cur_open, cur_dur))
+
+    return merged
+
+
 def _build_timeline(text, total_duration):
     """
     Builds a list of (start, end, shape, openness) entries spanning
@@ -197,11 +259,14 @@ def _build_timeline(text, total_duration):
 
     The relative durations from _tokenize() are scaled up or down so
     the whole sequence fits the real, measured audio length - so if
-    espeak paused longer than the heuristic expects around
+    the TTS engine paused longer than the heuristic expects around
     punctuation, or simply spoke faster or slower than the
     letter-count guess assumes, the mouth shapes still land across
     the real clip instead of drifting away from the sound over a
     long sentence.
+
+    Short segments are merged (see MIN_SHAPE_HOLD) after scaling, so
+    the minimum hold is measured in real seconds of audio.
     """
 
     tokens = _resolve_holds(
@@ -220,12 +285,20 @@ def _build_timeline(text, total_duration):
 
     scale = total_duration / predicted_total
 
+    scaled = [
+        (shape, openness, duration * scale)
+        for shape, openness, duration in tokens
+    ]
+
+    scaled = _merge_short_segments(
+        scaled,
+        MIN_SHAPE_HOLD
+    )
+
     timeline = []
     cursor = 0.0
 
-    for shape, openness, duration in tokens:
-
-        scaled_duration = duration * scale
+    for shape, openness, scaled_duration in scaled:
 
         timeline.append(
             (
@@ -346,8 +419,11 @@ class SpeechAnimator:
         if not text:
             return
 
-        self.fallback_tokens = _resolve_holds(
-            list(_tokenize(text))
+        self.fallback_tokens = _merge_short_segments(
+            _resolve_holds(
+                list(_tokenize(text))
+            ),
+            MIN_SHAPE_HOLD
         )
 
         self.fallback_index = 0
@@ -410,6 +486,36 @@ class SpeechAnimator:
             self._update_fallback(state, dt)
 
 
+    def _envelope_at(self, elapsed):
+        """
+        Loudness (0.0-1.0) at `elapsed` seconds, linearly
+        interpolated between envelope samples. Reading the nearest
+        sample instead made the openness step every 20 ms, which
+        showed up as a fine shimmer on top of the mouth motion.
+        """
+
+        if not self.envelope:
+            return 1.0
+
+        position = elapsed / self.envelope_window
+
+        last = len(self.envelope) - 1
+
+        if position <= 0:
+            return self.envelope[0]
+
+        if position >= last:
+            return self.envelope[last]
+
+        lower = int(position)
+        frac = position - lower
+
+        return (
+            self.envelope[lower] * (1.0 - frac)
+            + self.envelope[lower + 1] * frac
+        )
+
+
     def _update_audio(self, state):
 
         elapsed = time.monotonic() - self.start_time
@@ -431,20 +537,7 @@ class SpeechAnimator:
 
         _, _, shape, base_openness = self.timeline[self.timeline_index]
 
-        amplitude = 1.0
-
-        if self.envelope:
-
-            env_index = int(elapsed / self.envelope_window)
-            env_index = max(
-                0,
-                min(
-                    len(self.envelope) - 1,
-                    env_index
-                )
-            )
-
-            amplitude = self.envelope[env_index]
+        amplitude = self._envelope_at(elapsed)
 
         state.mouth_shape = shape
         state.target_mouth_open = base_openness * amplitude
