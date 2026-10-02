@@ -1,3 +1,4 @@
+import re
 import math
 import os
 import sys
@@ -5,6 +6,8 @@ import json
 import time
 import fcntl
 import queue
+import atexit
+import select
 import tempfile
 import threading
 import subprocess
@@ -41,6 +44,15 @@ SPEECH_QUEUE_FILE = os.path.join(
     "speech_queue.txt"
 )
 
+# Tells the MCP server (a separate process) whether Miss Minutes is
+# talking right now, and when she last stopped. The server uses it to
+# drop replies AIPI makes to her OWN voice picked up by its mic,
+# which is what causes the "answering herself" loop.
+SPEECH_STATUS_FILE = os.path.join(
+    BASE_DIR,
+    "speech_status.json"
+)
+
 LOG_DIR = os.path.join(
     BASE_DIR,
     "logs"
@@ -54,18 +66,97 @@ SPEECH_LOG_FILE = os.path.join(
 ESPEAK_SPEED = 160
 
 # Which TTS engine generates the WAV that gets analyzed for lip-sync
-# and played through aplay. Both are fast/local, no network or heavy
-# model involved, so neither should reintroduce the delay that made
-# Piper unusable.
-#   "espeak-ng" - what's been running; clearly robotic but instant.
+# and played through aplay.
+#   "espeak-ng" - clearly robotic but instant.
 #   "pico2wave" - SVOX Pico, still lightweight, noticeably less
-#                 robotic prosody. Requires the libttspico-utils
-#                 package (apt) on the Pi - not installed by default.
+#                 robotic prosody. Installed from the Debian
+#                 libttspico-utils .debs (not in Raspberry Pi OS's
+#                 own repo). Uses the SOX_EFFECTS vintage filter below.
+#   "piper"     - neural voice, by far the most natural. Runs as one
+#                 long-lived process with the voice model kept
+#                 loaded (reloading it per line is what made Piper
+#                 too slow before), and replies are spoken sentence
+#                 by sentence so the first sentence starts while the
+#                 rest are still being generated. Falls back to
+#                 pico2wave if Piper fails.
 # Flip this one line to A/B them; everything else (queueing,
 # analysis, playback, lip-sync) is unchanged either way.
-TTS_ENGINE = "espeak-ng"
+TTS_ENGINE = "piper"
 
 PICO2WAVE_LANGUAGE = "en-US"
+
+# ==========================
+# PIPER
+# ==========================
+# PIPER_VOICE: on a Pi 3B, "low" / "x_low" quality voices generate
+# several times faster than "medium". If the first sentence still
+# takes too long to start, download e.g. en_US-amy-low.onnx (and its
+# .onnx.json) into ~/piper/voices and point this at it.
+#
+# PIPER_LENGTH_SCALE: speaking speed. 1.0 = normal, lower = faster
+# (0.9 is a little quicker), higher = slower.
+
+PIPER_DIR = os.path.expanduser("~/piper")
+
+PIPER_BIN = os.path.join(PIPER_DIR, "piper")
+
+PIPER_VOICE = os.path.join(
+    PIPER_DIR,
+    "voices",
+    "en_US-hfc_female-medium.onnx"
+)
+
+PIPER_LENGTH_SCALE = 1.0
+
+# Longest we'll wait for Piper to produce one sentence before giving
+# up on it, restarting it, and using pico2wave for that sentence.
+PIPER_TIMEOUT = 30.0
+
+# Optional sox effects for Piper's voice. Empty = Piper's natural
+# voice. For the vintage TV sound without changing her pitch, try:
+#   ["highpass", "300", "lowpass", "3500"]
+PIPER_SOX_EFFECTS = []
+
+# Sentence fragments shorter than this (characters) are joined to the
+# next one, so "Oh!" or "Well," don't become their own clip with a
+# gap after them.
+MIN_SENTENCE_CHARS = 12
+
+# The first clip of every reply is cut short at a comma (or ; : -)
+# when it can be, so Piper only has to generate a few words before
+# Miss Minutes starts talking - e.g. "Well, sugar," plays while the
+# rest of the sentence is still being generated. Lower = she starts
+# sooner; higher = fewer breaks in her first sentence.
+FIRST_CHUNK_CHARS = 30
+
+# The very first clip may be as short as this (e.g. "Alright,"), since
+# for that one clip starting quickly matters more than an extra pause.
+FIRST_CHUNK_MIN_CHARS = 6
+
+# Later sentences longer than this are also split at commas, so one
+# long sentence can't make her stall mid-reply waiting on Piper.
+MAX_CHUNK_CHARS = 80
+
+# ==========================
+# VOICE EFFECT (SOX)
+# ==========================
+# Post-processes the pico2wave output with sox for a vintage
+# "old TV speaker" Miss Minutes sound. Requires: sudo apt install sox
+# If sox is missing or fails, the plain pico voice is used instead,
+# so speech never goes silent because of the effect.
+#
+# Tuning:
+#   pitch    - in cents (100 = one semitone). Higher = squeakier.
+#   tempo    - speed multiplier without changing pitch (1.0 = normal).
+#   highpass - cuts bass below this Hz. Higher = thinner/tinnier.
+#   lowpass  - cuts treble above this Hz. Lower = more muffled/radio.
+# Set SOX_EFFECTS = [] to turn the effect off entirely.
+SOX_EFFECTS = [
+    "pitch", "250",
+    "tempo", "1.05",
+    "highpass", "300",
+    "lowpass", "3500"
+]
 
 SPEECH_CHECK_INTERVAL = 0.10
 
@@ -175,7 +266,7 @@ speech_animator = SpeechAnimator()
 # ==========================
 # SPEECH STATE
 # ==========================
-# Everything under speech_state_lock is written by audio_worker()
+# Everything under speech_state_lock is written by play_worker()
 # (a background thread) and read by the main pygame thread. Only
 # the background thread writes to these fields; only the main
 # thread calls into speech_animator - that split is what makes the
@@ -197,6 +288,48 @@ audio_speaking = False
 speech_state_lock = threading.Lock()
 
 shutdown_event = threading.Event()
+
+
+# ==========================
+# SPEECH STATUS (FOR ECHO GUARD)
+# ==========================
+
+def write_speech_status(speaking):
+    """
+    Records whether audio is playing right now, plus (when it stops)
+    the wall-clock time it stopped, for the MCP server's echo guard.
+    Written to a temp file and renamed so the server never reads a
+    half-written file. Never raises - a status write failing must
+    not interrupt speech.
+    """
+
+    status = {
+        "speaking": bool(speaking),
+        "updated_at": time.time()
+    }
+
+    temp_path = SPEECH_STATUS_FILE + ".tmp"
+
+    try:
+
+        with open(temp_path, "w") as file:
+            json.dump(status, file)
+
+        os.replace(
+            temp_path,
+            SPEECH_STATUS_FILE
+        )
+
+    except Exception as error:
+
+        print(
+            "Speech status write error:",
+            error,
+            flush=True
+        )
+
+
+write_speech_status(False)
 
 
 # ==========================
@@ -269,6 +402,15 @@ def _synthesize_pico2wave(text):
 
         temp_path = temp_file.name
 
+    # sox writes its processed output to a second temp file rather
+    # than a pipe: a WAV written to a pipe can't have its length
+    # filled into the header, and analyze_wav() relies on that
+    # header to measure the clip's real duration for lip-sync.
+    fx_path = temp_path.replace(
+        ".wav",
+        "_fx.wav"
+    )
+
     try:
 
         subprocess.run(
@@ -285,15 +427,396 @@ def _synthesize_pico2wave(text):
             check=True
         )
 
-        with open(temp_path, "rb") as wav_file:
+        out_path = temp_path
+
+        if SOX_EFFECTS:
+
+            try:
+
+                subprocess.run(
+                    ["sox", temp_path, fx_path] + SOX_EFFECTS,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=True
+                )
+
+                out_path = fx_path
+
+            except (OSError, subprocess.CalledProcessError) as error:
+
+                # sox missing or failed - still speak with the plain
+                # pico voice rather than going silent.
+                print(
+                    "sox effect failed, using plain voice:",
+                    error,
+                    flush=True
+                )
+
+        with open(out_path, "rb") as wav_file:
             return wav_file.read()
 
     finally:
 
+        for path in (temp_path, fx_path):
+
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def _apply_sox(wav_bytes, effects):
+    """
+    Run a WAV through sox with the given effects. Goes via temp
+    files (not pipes) so the output WAV header carries the real
+    length. Returns the original bytes unchanged if effects is empty
+    or sox fails, so an effect problem never silences speech.
+    """
+
+    if not effects:
+        return wav_bytes
+
+    in_fd, in_path = tempfile.mkstemp(suffix=".wav")
+    out_path = in_path.replace(".wav", "_fx.wav")
+
+    try:
+
+        with os.fdopen(in_fd, "wb") as in_file:
+            in_file.write(wav_bytes)
+
+        subprocess.run(
+            ["sox", in_path, out_path] + list(effects),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True
+        )
+
+        with open(out_path, "rb") as out_file:
+            return out_file.read()
+
+    except (OSError, subprocess.CalledProcessError) as error:
+
+        print(
+            "sox effect failed, using plain voice:",
+            error,
+            flush=True
+        )
+
+        return wav_bytes
+
+    finally:
+
+        for path in (in_path, out_path):
+
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+# ==========================
+# PIPER (LONG-LIVED PROCESS)
+# ==========================
+# Piper's --output_dir mode reads one line of text at a time from
+# stdin, writes each to its own WAV file, and prints that file's path
+# on stdout. Keeping one Piper process alive means the voice model is
+# loaded once at startup instead of on every line - on a Pi 3B that
+# reload alone was a couple of seconds per reply.
+
+class PiperEngine:
+
+    def __init__(self):
+
+        self.process = None
+        self.lock = threading.Lock()
+
+        self.out_dir = os.path.join(
+            tempfile.gettempdir(),
+            "missminutes_piper"
+        )
+
+        os.makedirs(
+            self.out_dir,
+            exist_ok=True
+        )
+
+        self.log_path = os.path.join(
+            LOG_DIR,
+            "piper.log"
+        )
+
+
+    def _start(self):
+
+        env = dict(os.environ)
+
+        env["LD_LIBRARY_PATH"] = (
+            PIPER_DIR
+            + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+        )
+
+        log_file = open(self.log_path, "ab")
+
+        self.process = subprocess.Popen(
+            [
+                PIPER_BIN,
+                "--model", PIPER_VOICE,
+                "--output_dir", self.out_dir,
+                "--length_scale", str(PIPER_LENGTH_SCALE),
+                "--sentence_silence", "0"
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=log_file,
+            cwd=PIPER_DIR,
+            env=env
+        )
+
+        log_file.close()
+
+        print("Piper started", flush=True)
+
+
+    def stop(self):
+
+        if self.process and self.process.poll() is None:
+
+            try:
+                self.process.kill()
+            except OSError:
+                pass
+
+        self.process = None
+
+
+    def synthesize(self, text):
+        """
+        Returns WAV bytes for one line of text. Raises on failure or
+        timeout (after restarting Piper so the next call gets a
+        fresh process).
+        """
+
+        line = " ".join(text.split())
+
+        if not line:
+            raise ValueError("empty text")
+
+        with self.lock:
+
+            if self.process is None or self.process.poll() is not None:
+                self._start()
+
+            try:
+
+                self.process.stdin.write(
+                    (line + "\n").encode("utf-8")
+                )
+                self.process.stdin.flush()
+
+                ready, _, _ = select.select(
+                    [self.process.stdout],
+                    [],
+                    [],
+                    PIPER_TIMEOUT
+                )
+
+                if not ready:
+                    raise TimeoutError(
+                        f"Piper took over {PIPER_TIMEOUT:.0f}s"
+                    )
+
+                wav_path = self.process.stdout.readline().decode(
+                    "utf-8",
+                    "replace"
+                ).strip()
+
+                if not wav_path:
+                    raise RuntimeError(
+                        "Piper exited - see logs/piper.log"
+                    )
+
+            except Exception:
+
+                self.stop()
+                raise
+
         try:
-            os.remove(temp_path)
-        except OSError:
-            pass
+
+            with open(wav_path, "rb") as wav_file:
+                return wav_file.read()
+
+        finally:
+
+            try:
+                os.remove(wav_path)
+            except OSError:
+                pass
+
+
+piper_engine = PiperEngine()
+
+atexit.register(piper_engine.stop)
+
+
+def _synthesize_piper(text):
+
+    try:
+
+        wav_bytes = piper_engine.synthesize(text)
+
+    except Exception as error:
+
+        print(
+            "Piper failed, using pico2wave for this line:",
+            error,
+            flush=True
+        )
+
+        return _synthesize_pico2wave(text)
+
+    return _apply_sox(
+        wav_bytes,
+        PIPER_SOX_EFFECTS
+    )
+
+
+def _warm_up_piper():
+    """
+    Start Piper and run one throwaway line at startup, so loading
+    the model (and the first, slowest inference) happens before
+    anyone talks to Miss Minutes rather than on her first reply.
+    """
+
+    try:
+        piper_engine.synthesize("Hi.")
+        print("Piper warmed up", flush=True)
+    except Exception as error:
+        print("Piper warm-up failed:", error, flush=True)
+
+
+# ==========================
+# SENTENCE SPLITTING
+# ==========================
+
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+def split_sentences(text):
+    """
+    Splits a reply into sentences so speech can start after the
+    first one is generated instead of after the whole reply. Short
+    fragments are joined to the following sentence.
+    """
+
+    pieces = [
+        piece.strip()
+        for piece in _SENTENCE_END.split(text.strip())
+        if piece.strip()
+    ]
+
+    sentences = []
+    carry = ""
+
+    for piece in pieces:
+
+        combined = (carry + " " + piece).strip() if carry else piece
+
+        if len(combined) < MIN_SENTENCE_CHARS:
+            carry = combined
+        else:
+            sentences.append(combined)
+            carry = ""
+
+    if carry:
+
+        if sentences:
+            sentences[-1] = sentences[-1] + " " + carry
+        else:
+            sentences.append(carry)
+
+    return sentences
+
+
+_CLAUSE_BREAK = re.compile(r"(?<=[,;:—–])\s+|\s+-\s+")
+
+
+def _split_clauses(sentence, first_limit, limit):
+    """
+    Splits one sentence at clause breaks (commas etc.) into chunks
+    of at most `limit` characters - the first chunk at most
+    `first_limit` - without ever making a chunk shorter than
+    MIN_SENTENCE_CHARS. A single clause longer than the limit is
+    left whole rather than cut mid-phrase.
+    """
+
+    parts = [
+        part.strip()
+        for part in _CLAUSE_BREAK.split(sentence)
+        if part.strip()
+    ]
+
+    chunks = []
+    current = ""
+
+    for part in parts:
+
+        opening = not chunks and first_limit < limit
+
+        cap = first_limit if opening else limit
+
+        min_len = (
+            FIRST_CHUNK_MIN_CHARS
+            if opening
+            else MIN_SENTENCE_CHARS
+        )
+
+        candidate = (current + " " + part) if current else part
+
+        if (
+            current
+            and len(candidate) > cap
+            and len(current) >= min_len
+        ):
+            chunks.append(current)
+            current = part
+        else:
+            current = candidate
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
+def split_into_chunks(text):
+    """
+    The clips a reply is actually spoken in: its sentences, with
+    the reply's first clip kept short (FIRST_CHUNK_CHARS) and any
+    long sentence broken at commas (MAX_CHUNK_CHARS). Short first
+    clips are what make Piper usable on a Pi 3B - generation time
+    grows with text length, so a few words start playing far sooner
+    than a whole sentence.
+    """
+
+    chunks = []
+
+    for index, sentence in enumerate(split_sentences(text)):
+
+        first_limit = (
+            FIRST_CHUNK_CHARS
+            if index == 0
+            else MAX_CHUNK_CHARS
+        )
+
+        chunks.extend(
+            _split_clauses(
+                sentence,
+                first_limit,
+                MAX_CHUNK_CHARS
+            )
+        )
+
+    return chunks
 
 
 def synthesize_wav(text):
@@ -303,6 +826,9 @@ def synthesize_wav(text):
     already wrap this in a try/except).
     """
 
+    if TTS_ENGINE == "piper":
+        return _synthesize_piper(text)
+
     if TTS_ENGINE == "pico2wave":
         return _synthesize_pico2wave(text)
 
@@ -310,18 +836,34 @@ def synthesize_wav(text):
 
 
 # ==========================
-# AUDIO WORKER
+# AUDIO PIPELINE
 # ==========================
+# Two background threads, so generating the next sentence overlaps
+# with playing the current one:
+#
+#   synth_worker: takes whole replies from audio_queue, splits them
+#     into sentences, generates + measures each WAV, and hands them
+#     to play_queue in order.
+#   play_worker: takes ready sentences from play_queue and plays
+#     them, publishing the speech state that drives the mouth and
+#     subtitles.
+#
+# So the wait before Miss Minutes starts talking is only the time to
+# generate her FIRST sentence, not her whole reply. With the fast
+# engines (espeak-ng, pico2wave) this changes nothing noticeable;
+# with Piper it's the difference between usable and not.
+#
+# Everything under speech_state_lock is still written only by the
+# background side (play_worker) and read by the main pygame thread.
 
-def audio_worker():
+# Bounded so generation can't run arbitrarily far ahead of playback
+# (memory on a Pi 3B), while still keeping a sentence or two ready.
+play_queue = queue.Queue(
+    maxsize=3
+)
 
-    global current_speech_text
-    global current_speech_start_time
-    global current_speech_duration
-    global current_speech_envelope
-    global current_speech_envelope_window
-    global audio_speaking
 
+def synth_worker():
 
     while not shutdown_event.is_set():
 
@@ -339,6 +881,7 @@ def audio_worker():
         if text is None:
 
             audio_queue.task_done()
+            play_queue.put(None)
             break
 
 
@@ -354,25 +897,111 @@ def audio_worker():
         )
 
 
+        reply_start = time.monotonic()
+        first_chunk = True
+
+
+        for sentence in split_into_chunks(text):
+
+            try:
+
+                # ----------------------------------
+                # Generate the full WAV for this chunk in memory
+                # (instead of streaming straight into aplay) so its
+                # real duration and loudness can be measured for
+                # lip-sync before it plays.
+                # ----------------------------------
+
+                synth_start = time.monotonic()
+
+                wav_bytes = synthesize_wav(sentence)
+
+                duration, envelope, envelope_window = analyze_wav(
+                    wav_bytes
+                )
+
+                # ----------------------------------
+                # Timing diagnostics (pygame.log). "x realtime" is
+                # generation time / audio length: under 1.0 means the
+                # engine keeps ahead of playback, over 1.0 means there
+                # will be gaps between chunks.
+                # ----------------------------------
+
+                synth_time = time.monotonic() - synth_start
+
+                if duration:
+
+                    print(
+                        f"TTS: {synth_time:.2f}s to make "
+                        f"{duration:.2f}s of audio "
+                        f"({synth_time / duration:.2f}x realtime): "
+                        f"{sentence}",
+                        flush=True
+                    )
+
+                if first_chunk:
+
+                    print(
+                        "TTS: first audio ready "
+                        f"{time.monotonic() - reply_start:.2f}s "
+                        "after reply arrived",
+                        flush=True
+                    )
+
+                    first_chunk = False
+
+                play_queue.put(
+                    (
+                        sentence,
+                        wav_bytes,
+                        duration,
+                        envelope,
+                        envelope_window
+                    )
+                )
+
+            except Exception as error:
+
+                print(
+                    "Synthesis error:",
+                    error,
+                    flush=True
+                )
+
+                log_speech(
+                    "ERROR",
+                    f"{sentence} | {error}"
+                )
+
+
+        audio_queue.task_done()
+
+
+def play_worker():
+
+    global current_speech_text
+    global current_speech_start_time
+    global current_speech_duration
+    global current_speech_envelope
+    global current_speech_envelope_window
+    global audio_speaking
+
+
+    while True:
+
+        item = play_queue.get()
+
+
+        if item is None:
+
+            play_queue.task_done()
+            break
+
+
+        sentence, wav_bytes, duration, envelope, envelope_window = item
+
+
         try:
-
-            # ----------------------------------
-            # Generate the full WAV in memory first (instead of
-            # streaming straight into aplay) so its real duration
-            # and loudness can be measured before/while it plays.
-            # Both supported engines are lightweight, non-neural
-            # synthesizers - generating a sentence takes at most a
-            # few tens of milliseconds even on a Pi 3B, so this
-            # doesn't reintroduce the kind of delay Piper caused.
-            # ----------------------------------
-
-            wav_bytes = synthesize_wav(text)
-
-
-            duration, envelope, envelope_window = analyze_wav(
-                wav_bytes
-            )
-
 
             # ----------------------------------
             # Publish speech state BEFORE launching aplay, and
@@ -387,12 +1016,15 @@ def audio_worker():
 
             with speech_state_lock:
 
-                current_speech_text = text
+                current_speech_text = sentence
                 current_speech_start_time = start_time
                 current_speech_duration = duration
                 current_speech_envelope = envelope
                 current_speech_envelope_window = envelope_window
                 audio_speaking = True
+
+
+            write_speech_status(True)
 
 
             aplay_process = subprocess.Popen(
@@ -411,7 +1043,7 @@ def audio_worker():
 
             log_speech(
                 "FINISHED",
-                text
+                sentence
             )
 
 
@@ -425,11 +1057,13 @@ def audio_worker():
 
             log_speech(
                 "ERROR",
-                f"{text} | {error}"
+                f"{sentence} | {error}"
             )
 
 
         finally:
+
+            write_speech_status(False)
 
             with speech_state_lock:
 
@@ -441,19 +1075,33 @@ def audio_worker():
                 current_speech_envelope_window = None
 
 
-            audio_queue.task_done()
+            play_queue.task_done()
 
 
 # ==========================
-# START AUDIO WORKER
+# START AUDIO PIPELINE
 # ==========================
 
-audio_thread = threading.Thread(
-    target=audio_worker,
+if TTS_ENGINE == "piper":
+
+    threading.Thread(
+        target=_warm_up_piper,
+        daemon=True
+    ).start()
+
+
+synth_thread = threading.Thread(
+    target=synth_worker,
     daemon=True
 )
 
-audio_thread.start()
+play_thread = threading.Thread(
+    target=play_worker,
+    daemon=True
+)
+
+synth_thread.start()
+play_thread.start()
 
 
 # ==========================
@@ -605,7 +1253,7 @@ def update_speech_animation():
     """
     Detects speaking-state transitions and starts/stops
     speech_animator accordingly. This (and speech_animator itself)
-    only ever runs on the main thread - audio_worker only writes the
+    only ever runs on the main thread - play_worker only writes the
     shared fields above, it never touches speech_animator directly.
     """
 
