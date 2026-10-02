@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import time
 import fcntl
@@ -8,6 +9,7 @@ import threading
 import uvicorn
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 
 
@@ -45,6 +47,54 @@ MCP_AUTH_TOKEN = os.environ.get(
 PUBLIC_PATHS = {
     "/health"
 }
+
+
+# ==========================
+# TRANSPORT SECURITY (DNS REBINDING PROTECTION)
+# ==========================
+# FastMCP validates the Host/Origin headers on every MCP request to
+# guard against DNS rebinding attacks. If you construct FastMCP()
+# without an explicit host=, it assumes "127.0.0.1" and locks
+# allowed_hosts down to localhost only - which rejects every request
+# that arrives through the ngrok tunnel with a 421, even though
+# BearerTokenMiddleware above already requires a valid token.
+#
+# Set MISSMINUTES_PUBLIC_HOST to the ngrok hostname (just the host,
+# no scheme - e.g. "your-name.ngrok-free.dev") in .env so requests
+# through the tunnel are allowed too. Local/direct requests to
+# 127.0.0.1/localhost keep working either way.
+
+PUBLIC_HOST = os.environ.get(
+    "MISSMINUTES_PUBLIC_HOST",
+    ""
+).strip()
+
+_ALLOWED_HOSTS = [
+    "127.0.0.1:*",
+    "localhost:*",
+    "[::1]:*",
+    "smoked-usher-poster.ngrok-free.dev",
+]
+
+_ALLOWED_ORIGINS = [
+    "http://127.0.0.1:*",
+    "http://localhost:*",
+    "http://[::1]:*"
+]
+
+if PUBLIC_HOST:
+
+    _ALLOWED_HOSTS.append(PUBLIC_HOST)
+    _ALLOWED_ORIGINS.append(f"https://{PUBLIC_HOST}")
+
+else:
+
+    logger.warning(
+        "MISSMINUTES_PUBLIC_HOST is not set - requests arriving "
+        "through the ngrok tunnel will be rejected with a 421 "
+        "Misdirected Request. Set it to your ngrok hostname (e.g. "
+        "your-name.ngrok-free.dev) in .env."
+    )
 
 
 class BearerTokenMiddleware:
@@ -93,10 +143,23 @@ class BearerTokenMiddleware:
 # ==========================
 # FastMCP is the real class the installed `mcp` package exports for
 # this (mcp.server.fastmcp.FastMCP) - there is no `MCPServer` class
-# in mcp.server. It's what supplies .tool(), .custom_route() and
-# .streamable_http_app() below.
+# in mcp.server (that name only exists in the mcp 2.x line, which
+# this project is pinned below - see requirements-mcp.txt). It's
+# what supplies .tool(), .custom_route() and .streamable_http_app()
+# below.
+#
+# transport_security is passed explicitly here (see above) so
+# requests through the ngrok tunnel aren't rejected with a 421 -
+# leaving this unset would make FastMCP assume localhost-only.
 
-mcp = FastMCP("Miss Minutes MCP")
+mcp = FastMCP(
+    "Miss Minutes MCP",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=_ALLOWED_HOSTS,
+        allowed_origins=_ALLOWED_ORIGINS
+    )
+)
 
 
 # ==========================
@@ -116,6 +179,60 @@ SPEECH_QUEUE_FILE = os.path.join(
 # Protects against unbounded growth if the consumer falls behind
 # or stops draining the file.
 SPEECH_QUEUE_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+# ==========================
+# ECHO GUARD
+# ==========================
+# AIPI's mic can hear Miss Minutes' speaker. When it does, AIPI
+# treats her voice as the user talking and replies to it - she then
+# speaks that reply, AIPI hears it, and the two loop, "answering
+# herself."
+#
+# main.py writes speech_status.json whenever audio starts/stops. Any
+# reply that arrives while she is talking, or within
+# ECHO_GUARD_SECONDS after she stops, is very likely AIPI answering
+# her own voice, so it is dropped instead of spoken. Not speaking it
+# is what breaks the loop.
+#
+# A real user reply takes longer than this to arrive (the user has
+# to speak, then AIPI has to think), so it gets through. Raise this
+# if loops still slip through; lower it if your real replies get
+# dropped. 0 turns the guard off.
+
+ECHO_GUARD_SECONDS = 2.5
+
+SPEECH_STATUS_FILE = os.path.join(
+    BASE_DIR,
+    "speech_status.json"
+)
+
+
+def _probably_echo():
+    """
+    True if Miss Minutes is speaking now or stopped within
+    ECHO_GUARD_SECONDS. Missing/unreadable status = not an echo, so
+    a problem with the status file can never block real replies.
+    """
+
+    if ECHO_GUARD_SECONDS <= 0:
+        return False
+
+    try:
+
+        with open(SPEECH_STATUS_FILE) as file:
+            status = json.load(file)
+
+    except Exception:
+
+        return False
+
+    if status.get("speaking"):
+        return True
+
+    updated_at = status.get("updated_at") or 0
+
+    return (time.time() - updated_at) < ECHO_GUARD_SECONDS
 
 
 # ==========================
@@ -251,14 +368,102 @@ DEFAULT_EMOTION = "neutral"
 
 
 # ==========================
+# REPLY LENGTH LIMIT
+# ==========================
+# Two layers keep Miss Minutes from reading out paragraphs:
+#
+#   1. The receive_text tool description asks AIPI for 1-2 short
+#      sentences. That's what usually keeps replies short, and it
+#      keeps AIPI's own on-screen reply short too.
+#   2. This hard cap is the safety net when AIPI ignores that: only
+#      the first MAX_SPEECH_SENTENCES sentences are spoken, and never
+#      more than MAX_SPEECH_CHARS characters. Cuts land on a sentence
+#      end (or a word break if one sentence is huge), never mid-word.
+#
+# Set either to 0 to disable that limit.
+
+MAX_SPEECH_SENTENCES = 2
+MAX_SPEECH_CHARS = 220
+
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+def _limit_length(text: str) -> str:
+    """
+    Returns text cut down to the configured sentence/character
+    limits, ending on a sentence boundary wherever possible.
+    """
+
+    sentences = []
+
+    for part in _SENTENCE_END.split(text):
+
+        part = part.strip()
+
+        if not part:
+            continue
+
+        # A tiny exclamation like "Blue!" or "Oh!" rides along with
+        # the next sentence instead of using up one of the allowed
+        # sentences on its own.
+        if sentences and len(sentences[-1]) < 12:
+            sentences[-1] = sentences[-1] + " " + part
+        else:
+            sentences.append(part)
+
+    if MAX_SPEECH_SENTENCES > 0:
+        sentences = sentences[:MAX_SPEECH_SENTENCES]
+
+    if MAX_SPEECH_CHARS > 0:
+
+        kept = []
+        length = 0
+
+        for sentence in sentences:
+
+            added = len(sentence) + (1 if kept else 0)
+
+            if length + added > MAX_SPEECH_CHARS:
+                break
+
+            kept.append(sentence)
+            length += added
+
+        if not kept and sentences:
+
+            # The very first sentence alone is over the limit - cut
+            # it at the last word break that fits.
+            first = sentences[0][:MAX_SPEECH_CHARS]
+            cut = first.rfind(" ")
+
+            if cut > 0:
+                first = first[:cut]
+
+            kept = [first.rstrip(",;:-–— ") + "..."]
+
+        sentences = kept
+
+    return " ".join(sentences)
+
+
+# ==========================
 # RECEIVE TEXT
 # ==========================
 
 @mcp.tool()
 def receive_text(text: str, emotion: str = DEFAULT_EMOTION) -> str:
     """
-    Receive text and an emotional tone from AIPI for Miss Minutes
-    to speak and display.
+    ALWAYS call this tool with your full reply, on EVERY turn, so
+    Miss Minutes speaks it aloud. Every response you give must go
+    through this tool - never answer without calling it.
+
+    Keep every reply SHORT: one or two short sentences, under about
+    30 words. It is spoken aloud by a small character, so be brief
+    and conversational - no lists, no long explanations. Anything
+    past two sentences is cut off and never spoken.
+
+    Send only your own reply, never the user's words or a
+    transcript of what you heard.
 
     emotion must be one of: neutral, happy, angry, sad.
     Invalid or missing values fall back to neutral rather than
@@ -270,6 +475,20 @@ def receive_text(text: str, emotion: str = DEFAULT_EMOTION) -> str:
     """
 
     clean_text = (text or "").strip()
+
+    original_length = len(clean_text)
+
+    clean_text = _limit_length(clean_text)
+
+    was_shortened = len(clean_text) < original_length
+
+    if was_shortened:
+
+        logger.info(
+            "Reply shortened from %d to %d chars",
+            original_length,
+            len(clean_text)
+        )
 
     clean_emotion = (emotion or "").strip().lower()
 
@@ -294,6 +513,26 @@ def receive_text(text: str, emotion: str = DEFAULT_EMOTION) -> str:
         logger.warning("Empty text ignored")
 
         return "Empty text ignored"
+
+    # ==========================
+    # IGNORE PROBABLE ECHOES
+    # ==========================
+    # See ECHO_GUARD above. The return text tells AIPI's model not to
+    # retry, so it doesn't just send the same echo reply again.
+
+    if _probably_echo():
+
+        logger.info(
+            "Echo guard: ignored reply while Miss Minutes was "
+            "speaking: %s",
+            clean_text
+        )
+
+        return (
+            "Skipped: Miss Minutes was still speaking, so what you "
+            "heard was most likely her own voice, not the user. Do "
+            "not resend this. Wait for the user to speak."
+        )
 
     # ==========================
     # IGNORE EXACT BACK-TO-BACK DUPLICATES
@@ -351,6 +590,18 @@ def receive_text(text: str, emotion: str = DEFAULT_EMOTION) -> str:
         )
 
     logger.info("Queued text #%d for Miss Minutes display", new_id)
+
+    if was_shortened:
+
+        # Tells AIPI's model, mid-conversation, that it ran long -
+        # it tends to self-correct on the next turn. The second
+        # sentence stops it from "helpfully" sending the rest.
+        return (
+            "Text received by Miss Minutes display, but it was too "
+            "long - only the first part was spoken. Keep future "
+            "replies to one or two short sentences. Do not resend "
+            "the rest."
+        )
 
     return "Text received by Miss Minutes display"
 
