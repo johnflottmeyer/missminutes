@@ -11,6 +11,47 @@ import struct
 # 20 ms = 50 slices per second, finer than the 30 FPS display.
 ENVELOPE_WINDOW = 0.02
 
+# How many neighboring slices on each side get averaged into each
+# loudness value. Raw 20 ms slices pick up the buzz of individual
+# syllables and plosives, which made the mouth openness flutter.
+# 2 = a 5-slice (100 ms) moving average: still follows words, but
+# not every little spike. 0 disables smoothing.
+ENVELOPE_SMOOTHING = 2
+
+
+# ==========================
+# SMOOTH
+# ==========================
+
+def _smooth(values, radius):
+    """
+    Centered moving average with the given radius. Uses a running
+    sum so it stays O(n) - this runs on every spoken line on a Pi 3B.
+    """
+
+    if radius <= 0 or len(values) < 3:
+        return values
+
+    count = len(values)
+
+    prefix = [0.0]
+
+    for value in values:
+        prefix.append(prefix[-1] + value)
+
+    smoothed = []
+
+    for index in range(count):
+
+        low = max(0, index - radius)
+        high = min(count, index + radius + 1)
+
+        smoothed.append(
+            (prefix[high] - prefix[low]) / (high - low)
+        )
+
+    return smoothed
+
 
 # ==========================
 # ANALYZE WAV
@@ -82,6 +123,11 @@ def analyze_wav(wav_bytes, window=ENVELOPE_WINDOW):
             envelope.append(
                 sum(map(abs, chunk)) / float(len(chunk))
             )
+
+        envelope = _smooth(
+            envelope,
+            ENVELOPE_SMOOTHING
+        )
 
         peak = max(envelope)
 
