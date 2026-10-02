@@ -4,6 +4,14 @@ POSES = {
         "eye_scale_y": 1.0,
         "pupil_x": 0,
         "pupil_y": 0,
+        "left_upper_arm": -18,
+        "left_lower_arm": -10,
+        "right_upper_arm": 18,
+        "right_lower_arm": 10,
+        "left_upper_leg": -8,
+        "left_lower_leg": 3,
+        "right_upper_leg": 8,
+        "right_lower_leg": -3,
     },
 
     "happy": {
@@ -51,5 +59,21 @@ def set_pose(state, pose_name):
 
     state.target_pose_right_pupil_x = pose["pupil_x"]
     state.target_pose_right_pupil_y = pose["pupil_y"]
+
+    # Limb targets. Poses without explicit limb values keep the
+    # neutral stance for now; we'll give each emotion its own body
+    # language after the base proportions are visually approved.
+    neutral = POSES["neutral"]
+    for name in (
+        "left_upper_arm", "left_lower_arm",
+        "right_upper_arm", "right_lower_arm",
+        "left_upper_leg", "left_lower_leg",
+        "right_upper_leg", "right_lower_leg"
+    ):
+        setattr(
+            state,
+            "target_" + name,
+            pose.get(name, neutral[name])
+        )
 
     state.pose = pose_name
