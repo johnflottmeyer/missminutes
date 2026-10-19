@@ -1288,7 +1288,14 @@ def update_speech_animation():
     # Start animation when actual audio starts.
     if speaking:
 
-        if not speech_animator.speaking:
+        # Only start once per clip: the animator stops itself when
+        # its clock passes the clip length, which can be a moment
+        # before aplay actually exits. Without this check it would
+        # restart the same clip every frame in that gap.
+        if (
+            not speech_animator.speaking
+            and start_time != speech_animator.clip_start_time
+        ):
 
             speech_animator.start_audio(
                 text,

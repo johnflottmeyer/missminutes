@@ -23,6 +23,10 @@ AUDIO_LOOKAHEAD = 0.06
 # for a more articulate/busier one. 0 disables merging.
 MIN_SHAPE_HOLD = 0.09
 
+# Once speech stops and mouth_open eases below this, the mouth shape
+# returns to REST (the closed smile).
+MOUTH_CLOSED_THRESHOLD = 0.05
+
 
 # ==========================
 # TEXT -> MOUTH SHAPE TOKENS
@@ -356,6 +360,15 @@ class SpeechAnimator:
         self.current_shape = "REST"
         self.current_openness = 0.0
 
+        # True after stop() until the mouth has eased shut, at which
+        # point the shape is switched back to REST (see update()).
+        self.closing = False
+
+        # start_time of the clip this animator last started, so the
+        # main loop doesn't restart the same clip if the animator
+        # finishes a moment before aplay does.
+        self.clip_start_time = None
+
 
     # ==========================
     # START - AUDIO DRIVEN
@@ -406,8 +419,11 @@ class SpeechAnimator:
             else time.monotonic()
         )
 
+        self.clip_start_time = start_time
+
         self.audio_driven = True
         self.speaking = True
+        self.closing = False
 
 
     # ==========================
@@ -435,6 +451,7 @@ class SpeechAnimator:
 
         self.audio_driven = False
         self.speaking = True
+        self.closing = False
 
 
     def start(self, text):
@@ -460,6 +477,12 @@ class SpeechAnimator:
         # mouth_open every frame regardless of self.speaking.
         state.target_mouth_open = 0.0
 
+        # The mouth shape is switched back to REST in update() once
+        # mouth_open has eased down. Leaving it on the last spoken
+        # shape (AA/OH/EE) kept her mouth drawn open after speech,
+        # since those shapes have a minimum open size even at 0.
+        self.closing = True
+
         # Only idle wander resets when speech ends. The current
         # emotion's own pupil offset (the pose_* fields) is left
         # alone, so e.g. "sad" eyes don't pop back to a neutral
@@ -478,6 +501,11 @@ class SpeechAnimator:
     def update(self, state, dt):
 
         if not self.speaking:
+
+            if self.closing and state.mouth_open <= MOUTH_CLOSED_THRESHOLD:
+                state.mouth_shape = "REST"
+                self.closing = False
+
             return
 
         if self.audio_driven:
