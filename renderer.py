@@ -29,6 +29,9 @@ TONGUE_COLOR = (188, 73, 52)
 
 HEAD_RADIUS = 110
 
+# Character transparency. 255 = solid, 217 = about 85% opaque.
+CHARACTER_ALPHA = 217
+
 
 def draw_head(surface, cx, cy):
 
@@ -763,7 +766,8 @@ def draw_mouth(
 LIMB_ORANGE = FACE_ORANGE
 LIMB_EDGE = FACE_EDGE
 GLOVE_WHITE = (255, 245, 220)
-SHOE_DARK = (91, 45, 27)
+SHOE_ORANGE = (238, 139, 42)
+LEG_OUTLINE = (218, 155, 82)
 
 
 def _joint_point(start, length, angle_degrees):
@@ -785,63 +789,83 @@ def _draw_segment(surface, start, end, width):
 
 
 def draw_arm(surface, shoulder, upper_angle, lower_angle, side):
-    upper_len = 57
-    lower_len = 52
+    # Miss Minutes has very slim, short cartoon arms.  Most of the upper
+    # segment is hidden by the clock face; only the lower portion should
+    # visibly emerge beside her body.
+    upper_len = 45
+    lower_len = 39
 
     elbow = _joint_point(shoulder, upper_len, upper_angle)
     # Lower angle is relative to the upper arm, like an elbow joint.
     hand = _joint_point(elbow, lower_len, upper_angle + lower_angle)
 
-    _draw_segment(surface, shoulder, elbow, 15)
-    _draw_segment(surface, elbow, hand, 13)
+    _draw_segment(surface, shoulder, elbow, 8)
+    _draw_segment(surface, elbow, hand, 7)
 
     hx, hy = int(hand[0]), int(hand[1])
-    # Cuff hides the arm-to-glove transition.
-    pygame.draw.ellipse(surface, GLOVE_WHITE, (hx - 10, hy - 7, 20, 17))
-    # Simple vintage-cartoon mitten; fingers can be refined after scale is approved.
-    pygame.draw.circle(surface, GLOVE_WHITE, (hx, hy + 9), 13)
-    thumb_x = hx + (10 if side == "left" else -10)
-    pygame.draw.circle(surface, GLOVE_WHITE, (thumb_x, hy + 7), 6)
-    pygame.draw.arc(surface, LIMB_EDGE, (hx - 8, hy + 4, 16, 12), 0, math.pi, 2)
+    # Simple mitten-style glove. Keep the palm clean -- no decorative
+    # curved line. Thumb placement is mirrored so each hand reads correctly
+    # when viewed from the front.
+    pygame.draw.ellipse(surface, GLOVE_WHITE, (hx - 7, hy - 5, 14, 11))
+    pygame.draw.circle(surface, GLOVE_WHITE, (hx, hy + 6), 9)
+    thumb_side = 1 if side == "left" else -1
+    thumb_x = hx + thumb_side * 7
+    pygame.draw.circle(surface, GLOVE_WHITE, (thumb_x, hy + 5), 4)
 
 
 def draw_leg(surface, hip, upper_angle, lower_angle, side):
-    upper_len = 53
-    lower_len = 48
+    # In the show the legs read as thin, nearly black ink strokes rather
+    # than orange tubes. Keep the articulated knee but draw one clean dark
+    # line for each segment.
+    upper_len = 43
+    lower_len = 39
 
     knee = _joint_point(hip, upper_len, upper_angle)
     ankle = _joint_point(knee, lower_len, upper_angle + lower_angle)
 
-    _draw_segment(surface, hip, knee, 16)
-    _draw_segment(surface, knee, ankle, 14)
+    hip_i = (int(hip[0]), int(hip[1]))
+    knee_i = (int(knee[0]), int(knee[1]))
+    ankle_i = (int(ankle[0]), int(ankle[1]))
 
-    ax, ay = int(ankle[0]), int(ankle[1])
+    # Keep the legs dark like the reference, but give the black line a
+    # narrow warm/light outline so it remains visible on the black stage.
+    pygame.draw.line(surface, LEG_OUTLINE, hip_i, knee_i, 5)
+    pygame.draw.line(surface, LEG_OUTLINE, knee_i, ankle_i, 5)
+    pygame.draw.line(surface, LIMB_EDGE, hip_i, knee_i, 3)
+    pygame.draw.line(surface, LIMB_EDGE, knee_i, ankle_i, 3)
+
+    ax, ay = ankle_i
     direction = -1 if side == "left" else 1
-    # Rounded, slightly outward-pointing shoe.
-    shoe = pygame.Rect(ax - 12, ay - 2, 29, 16)
-    shoe.x += direction * 4
-    pygame.draw.ellipse(surface, SHOE_DARK, shoe)
-    toe = (ax + direction * 13, ay + 7)
-    pygame.draw.circle(surface, SHOE_DARK, toe, 8)
+
+    # Shoe construction: the large lower form is the toe box.  The smaller
+    # circle sits above it as the entry/fold of the shoe and overlaps the
+    # toe box instead of sitting beside it.
+    toe_center = (ax + direction * 4, ay + 8)
+    upper_center = (ax, ay + 1)
+
+    pygame.draw.circle(surface, LIMB_EDGE, toe_center, 10)
+    pygame.draw.circle(surface, SHOE_ORANGE, toe_center, 8)
+    pygame.draw.circle(surface, LIMB_EDGE, upper_center, 7)
+    pygame.draw.circle(surface, SHOE_ORANGE, upper_center, 5)
 
 
 def draw_limbs(surface, state, cx, cy):
     # Attachment points intentionally sit beneath the clock so the body masks
     # the joints, just as the HTML/CSS version did visually.
     draw_leg(
-        surface, (cx - 43, cy + 82),
+        surface, (cx - 17, cy + 91),
         state.left_upper_leg, state.left_lower_leg, "left"
     )
     draw_leg(
-        surface, (cx + 43, cy + 82),
+        surface, (cx + 17, cy + 91),
         state.right_upper_leg, state.right_lower_leg, "right"
     )
     draw_arm(
-        surface, (cx - 91, cy + 4),
+        surface, (cx - 84, cy + 24),
         state.left_upper_arm, state.left_lower_arm, "left"
     )
     draw_arm(
-        surface, (cx + 91, cy + 4),
+        surface, (cx + 84, cy + 24),
         state.right_upper_arm, state.right_lower_arm, "right"
     )
 
@@ -850,7 +874,7 @@ def draw_limbs(surface, state, cx, cy):
 # CHARACTER
 # ==========================
 
-def draw_character(
+def _draw_character_opaque(
     surface,
     state
 ):
@@ -979,3 +1003,14 @@ def draw_character(
         state.mouth_shape,
         state.mouth_open
     )
+
+# ==========================
+# TRANSPARENT CHARACTER PASS
+# ==========================
+
+def draw_character(surface, state):
+    """Draw Miss Minutes as one translucent layer over the stage."""
+    character_layer = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+    _draw_character_opaque(character_layer, state)
+    character_layer.set_alpha(CHARACTER_ALPHA)
+    surface.blit(character_layer, (0, 0))

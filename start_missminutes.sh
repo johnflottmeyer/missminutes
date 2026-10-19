@@ -6,38 +6,31 @@
 
 PROJECT_DIR="/home/mminutes/missminutes"
 
-# The MCP server needs Python >= 3.10 (every mcp package version
-# requires it); the system Python on Raspberry Pi OS Bullseye is
-# 3.9. Build this venv with a newer Python via pyenv - see
-# requirements-mcp.txt for the one-time setup.
+# The MCP server runs in its own venv (.venv-mcp) built from
+# requirements-mcp.txt. On Raspberry Pi OS Lite 64-bit the system
+# Python is new enough (>= 3.10), so the venv is created directly:
+#   python3 -m venv .venv-mcp
+#   .venv-mcp/bin/pip install -r requirements-mcp.txt
 VENV_MCP="$PROJECT_DIR/.venv-mcp"
 
-# The display process (main.py) needs pygame, which is only
-# installed for the system Python (requirements.txt). A bare
-# "python3" would instead resolve to whatever's first on PATH -
-# including .venv-mcp's Python 3.11 if that venv happens to be
-# active in whatever shell runs this script, which has no pygame
-# and fails with ModuleNotFoundError. Pin this to the system
-# interpreter explicitly so activating .venv-mcp elsewhere can
-# never affect this.
+# The display process (main.py) needs pygame, which is installed
+# for the system Python (apt: python3-pygame). Pin this to the
+# system interpreter explicitly so an active .venv-mcp in the
+# calling shell can never make "python3" resolve to the venv,
+# which has no pygame.
 SYSTEM_PYTHON="/usr/bin/python3"
 
-# This Pi's locale resolves Python's default text encoding to
-# latin-1 rather than UTF-8, and AIPI-generated text routinely
-# contains characters outside latin-1 (curly quotes, em dashes) -
-# that broke stdout printing, log file writes, and subprocess
-# argument encoding one at a time as each was discovered. Force
-# Python's UTF-8 mode (PEP 540) for every process this script
-# launches so any other locale-dependent spot is covered too,
-# not just the ones already patched in code.
+# Force Python's UTF-8 mode (PEP 540) for every process this
+# script launches. AIPI-generated text routinely contains
+# characters outside latin-1 (curly quotes, em dashes), which
+# breaks printing, log writes and subprocess arguments if the
+# locale's default encoding isn't UTF-8.
 export PYTHONUTF8=1
+export SDL_AUDIODRIVER=dummy
 
 LOG_DIR="$PROJECT_DIR/logs"
 
 MCP_PORT=8000
-
-VNC_DISPLAY=":1"
-VNC_GEOMETRY="1920x1080"
 
 mkdir -p "$LOG_DIR"
 
@@ -62,29 +55,7 @@ echo ""
 
 
 # ============================================================
-# 1. START VNC
-# ============================================================
-
-if pgrep -f "Xvnc.*:1" > /dev/null
-then
-
-    echo "[OK] VNC :1 already running"
-
-else
-
-    echo "[START] VNC virtual desktop :1"
-
-    vncserver-virtual "$VNC_DISPLAY" \
-        -geometry "$VNC_GEOMETRY" \
-        > "$LOG_DIR/vnc.log" 2>&1 &
-
-    sleep 3
-
-fi
-
-
-# ============================================================
-# 2. START MCP SERVER
+# 1. START MCP SERVER
 # ============================================================
 
 if pgrep -f "missminutes_mcp.py" > /dev/null
@@ -101,7 +72,7 @@ else
     if [ ! -x "$VENV_MCP/bin/python" ]
     then
         echo "[ERROR] $VENV_MCP not found - see requirements-mcp.txt" \
-            "for the one-time pyenv/venv setup"
+            "for the one-time venv setup"
     else
         nohup "$VENV_MCP/bin/python" \
             missminutes_mcp.py \
@@ -114,7 +85,7 @@ fi
 
 
 # ============================================================
-# 3. START NGROK
+# 2. START NGROK
 # ============================================================
 
 if pgrep -f "ngrok.*$MCP_PORT" > /dev/null
@@ -135,8 +106,15 @@ fi
 
 
 # ============================================================
-# 4. START PYGAME MISS MINUTES
+# 3. START PYGAME MISS MINUTES
 # ============================================================
+# Raspberry Pi OS Lite has no desktop, so xinit starts a bare X
+# server on :0 that runs only main.py (no window manager, no
+# cursor). Direct kmsdrm and cage/Wayland both hung on this Pi 3B;
+# plain X works. Needs /etc/X11/Xwrapper.config with:
+#   allowed_users=anybody
+#   needs_root_rights=yes
+# so X can start without sudo.
 
 if pgrep -f "python3.*main.py" > /dev/null
 then
@@ -149,7 +127,8 @@ else
 
     cd "$PROJECT_DIR" || exit 1
 
-    DISPLAY=:0 nohup "$SYSTEM_PYTHON" main.py \
+    nohup xinit "$SYSTEM_PYTHON" "$PROJECT_DIR/main.py" \
+        -- :0 -nocursor \
         > "$LOG_DIR/pygame.log" 2>&1 &
 
     sleep 2
@@ -167,9 +146,8 @@ echo " Miss Minutes started"
 echo "======================================"
 echo ""
 
-echo "Pygame display : :0"
+echo "Pygame display : :0 (xinit)"
 echo "MCP port       : $MCP_PORT"
-echo "VNC desktop    : $VNC_DISPLAY $VNC_GEOMETRY"
 
 echo ""
 echo "Logs:"
@@ -178,5 +156,4 @@ echo ""
 echo "  pygame.log"
 echo "  mcp.log"
 echo "  ngrok.log"
-echo "  vnc.log"
 echo ""

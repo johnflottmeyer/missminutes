@@ -152,15 +152,15 @@ class CharacterState:
         # Each segment has a displayed value and a target so future
         # emotional/body poses can move without snapping.
 
-        self.left_upper_arm = -18.0
-        self.left_lower_arm = -10.0
-        self.right_upper_arm = 18.0
-        self.right_lower_arm = 10.0
+        self.left_upper_arm = -5.0
+        self.left_lower_arm = -3.0
+        self.right_upper_arm = 5.0
+        self.right_lower_arm = 3.0
 
-        self.left_upper_leg = -8.0
-        self.left_lower_leg = 3.0
-        self.right_upper_leg = 8.0
-        self.right_lower_leg = -3.0
+        self.left_upper_leg = -2.0
+        self.left_lower_leg = 1.0
+        self.right_upper_leg = 2.0
+        self.right_lower_leg = -1.0
 
         self.target_left_upper_arm = self.left_upper_arm
         self.target_left_lower_arm = self.left_lower_arm

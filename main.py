@@ -183,18 +183,20 @@ os.makedirs(
 
 pygame.init()
 
-display_info = pygame.display.Info()
-
-SCREEN_WIDTH = display_info.current_w
-SCREEN_HEIGHT = display_info.current_h
-
-screen = pygame.display.set_mode(
-    (
-        SCREEN_WIDTH,
-        SCREEN_HEIGHT
-    ),
-    pygame.FULLSCREEN
-)
+if os.environ.get("WAYLAND_DISPLAY"):
+    # Running under cage: cage fills the screen itself, and
+    # FULLSCREEN plus Info() before a window exists hangs here.
+    SCREEN_WIDTH = int(os.environ.get("MM_WIDTH", 1024))
+    SCREEN_HEIGHT = int(os.environ.get("MM_HEIGHT", 600))
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+else:
+    display_info = pygame.display.Info()
+    SCREEN_WIDTH = display_info.current_w
+    SCREEN_HEIGHT = display_info.current_h
+    screen = pygame.display.set_mode(
+        (SCREEN_WIDTH, SCREEN_HEIGHT),
+        pygame.FULLSCREEN
+    )
 
 pygame.mouse.set_visible(False)
 
@@ -217,15 +219,31 @@ clock = pygame.time.Clock()
 # the full screen at full resolution every frame - only the canvas
 # region itself needs to be redrawn each frame.
 
-CANVAS_X = (
-    SCREEN_WIDTH
-    - CANVAS_WIDTH
-) // 2
+#CANVAS_X = (
+#    SCREEN_WIDTH
+#    - CANVAS_WIDTH
+#) // 2
 
-CANVAS_Y = (
-    SCREEN_HEIGHT
-    - CANVAS_HEIGHT
-) // 2
+#CANVAS_Y = (
+#    SCREEN_HEIGHT
+#    - CANVAS_HEIGHT
+#) // 2
+
+# Scale the fixed-size canvas up to fill as much of the screen as
+# possible without stretching her. MM_SCALE overrides the automatic
+# fit (e.g. MM_SCALE=1.0 for original size).
+CANVAS_SCALE = float(os.environ.get(
+    "MM_SCALE",
+    min(SCREEN_WIDTH / CANVAS_WIDTH, SCREEN_HEIGHT / CANVAS_HEIGHT)
+))
+
+SCALED_WIDTH = int(CANVAS_WIDTH * CANVAS_SCALE)
+SCALED_HEIGHT = int(CANVAS_HEIGHT * CANVAS_SCALE)
+
+scaled_canvas = pygame.Surface((SCALED_WIDTH, SCALED_HEIGHT))
+
+CANVAS_X = (SCREEN_WIDTH - SCALED_WIDTH) // 2
+CANVAS_Y = (SCREEN_HEIGHT - SCALED_HEIGHT) // 2
 
 screen.fill(BLACK)
 pygame.display.flip()
@@ -1622,14 +1640,26 @@ def draw_frame(dt):
     # the full-screen black fill happens once, before the loop
     # starts).
 
-    screen.blit(
+    #screen.blit(
+    #    canvas,
+    #    (
+    #        CANVAS_X,
+    #        CANVAS_Y
+    #    )
+    #)
+    pygame.transform.scale(
         canvas,
+        (SCALED_WIDTH, SCALED_HEIGHT),
+        scaled_canvas
+    )
+
+    screen.blit(
+        scaled_canvas,
         (
             CANVAS_X,
             CANVAS_Y
         )
     )
-
 
     pygame.display.flip()
 
