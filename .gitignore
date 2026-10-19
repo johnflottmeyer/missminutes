@@ -5,3 +5,4 @@ __pycache__/
 logs/
 speech_queue.txt
 .env
+speech_status.json
